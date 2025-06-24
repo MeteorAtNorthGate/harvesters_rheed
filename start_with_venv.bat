@@ -1,1 +1,1 @@
-.\.venv\Scripts\activate.bat&&main_app.py
+.\.venv\Scripts\activate.bat&&.\src\main_app.py
