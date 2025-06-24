@@ -11,10 +11,3 @@ config.ini
 # 忽略 pyinstaller打包
 build/
 dist/
-
-# 忽略图像素材
-rheed_analyzer.ico
-版面设计和坐标计算/
-
-#其他
-相机端口测试程序/
