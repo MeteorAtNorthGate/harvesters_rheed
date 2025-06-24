@@ -1,5 +1,4 @@
 # main_app.py
-# 作用: 应用程序的主入口。
 
 import sys
 import pyqtgraph as pg
@@ -34,4 +33,17 @@ def main():
     return exit_code
 
 if __name__ == "__main__":
+    MIN_PYTHON_VERSION = (3, 9)
+    MAX_PYTHON_VERSION = (3, 11, 99)  # 使用一个足够大的第三位来表示所有 3.11.x 版本
+
+    # 检查当前 Python 版本
+    if not (MIN_PYTHON_VERSION <= sys.version_info < (MAX_PYTHON_VERSION[0], MAX_PYTHON_VERSION[1] + 1)):
+        current_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        required_version = f"Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]} 到 {MAX_PYTHON_VERSION[0]}.{MAX_PYTHON_VERSION[1]}"
+
+        print(f"错误：此项目需要 {required_version} 版本。您当前使用的版本是 {current_version}。", file=sys.stderr)
+        print("请切换到兼容的 Python 版本后重试。", file=sys.stderr)
+        sys.exit(1)  # 以错误码退出程序
+    print("Python 版本检查通过。项目正在启动...")
+
     sys.exit(main())
