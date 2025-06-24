@@ -1,0 +1,1 @@
+.\.venv\Scripts\activate.bat&&main_app.py
