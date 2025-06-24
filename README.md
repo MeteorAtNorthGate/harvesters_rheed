@@ -6,4 +6,6 @@ This is a GUI built with Harvesters and PySide6 for accessing GenICam-compliant 
 Please use Python version >=3.9 <=3.11 ,the lastest 3.13 would not work, for we are using harvesters.<br/>
 In short, I recommend using .venv or such to configure the environment.<br/>
 python版本建议3.9~3.11，3.13不行，其他依赖包参见requirements，请使用对应版本的依赖包，否则pyqtgraph容易失效（比如画不出曲线什么的=。=）<br/>
-嘛总而言之,基本上是必须使用虚拟环境了，几个依赖包都挺脆的。
+嘛总而言之,基本上是必须使用虚拟环境了，几个依赖包都挺脆的。<br/>
+**the main entry is main_app.py**<br/>
+**程序主入口是 main_app.py**<br/>
