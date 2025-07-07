@@ -23,6 +23,20 @@ class AnalysisController(QObject):
         self.dynamic_y = []
 
         self.time_tracker = QElapsedTimer()
+        self.analysis_enabled = True  # MODIFICATION: Add an enable/disable flag
+
+    # MODIFICATION: Add a slot to control the analysis process
+    @Slot(bool)
+    def set_analysis_enabled(self, enabled):
+        """
+        Enables or disables the continuous frame processing.
+        """
+        self.analysis_enabled = enabled
+        print(f"AnalysisController: Analysis enabled set to {self.analysis_enabled}")
+        if not self.analysis_enabled:
+            # If analysis is turned off, clear any existing data.
+            self.clear_dynamic_data()
+
 
     @Slot(QRect)
     def set_roi(self, roi_rect):
@@ -35,6 +49,10 @@ class AnalysisController(QObject):
 
     @Slot(object)
     def process_frame_for_analysis(self, frame):
+        # MODIFICATION: Check if analysis is enabled before processing
+        if not self.analysis_enabled:
+            return
+
         if frame is None:
             self.time_tracker.invalidate()
             self.latest_frame = None
@@ -131,6 +149,3 @@ class AnalysisController(QObject):
             self.analysis_result_ready.emit(result_text)
         except Exception as e:
             self.analysis_result_ready.emit(f"分析时发生错误: {e}")
-
-    #def link_image_view(self, image_view):
-    #    self.image_view = image_view

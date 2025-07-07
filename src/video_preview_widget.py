@@ -19,7 +19,7 @@ class VideoPreviewLabel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet("background-color: #000;")
+        self.setStyleSheet("background-color: #202020")
 
         self._current_pixmap = None
         self._is_in_selection_mode = False

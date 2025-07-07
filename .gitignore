@@ -7,6 +7,8 @@ __pycache__/
 
 # 忽略config
 config.ini
+epi_layer.txt
+substrate.txt
 
 # 忽略 pyinstaller打包
 build/

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 	QPushButton, QLabel, QMessageBox, QSplitter, QListWidget, QListWidgetItem,
 	QFrame, QFileDialog, QLineEdit, QComboBox, QButtonGroup
 )
+import numpy as np
 
 import config_manager
 from camera_setup import setup_harvester, cleanup_harvester
@@ -97,6 +98,9 @@ class MainWindow(QMainWindow):
 		if self.status_button_group.checkedButton():
 			self._on_status_button_changed(self.status_button_group.checkedButton())
 
+		initial_function = self.main_plot_widget.control_output.function_combo.currentText()
+		self._on_function_selection_changed(initial_function)
+
 	@Slot()
 	def _on_start_capture(self):
 		current_item = self.camera_list_widget.currentItem()
@@ -143,9 +147,8 @@ class MainWindow(QMainWindow):
 
 	def _display_frame(self, frame):
 		try:
-			if self.video_recorder and self.video_recorder.is_recording:
-				self.video_recorder.add_frame(frame)
-
+			# MODIFICATION: Recording is no longer handled here.
+			# It's driven by its own signal from the controller.
 			self.current_frame_for_recording = frame
 			rgb_frame = frame[..., ::-1]
 			self.image_view.set_frame(rgb_frame)
@@ -179,12 +182,38 @@ class MainWindow(QMainWindow):
 		self.analysis_controller.data_cleared.connect(self.main_plot_widget.dynamic_plot.clear_plot)
 		self.analysis_controller.data_point_generated.connect(self.main_plot_widget.dynamic_plot.add_point)
 		self.analysis_controller.analysis_result_ready.connect(self.main_plot_widget.control_output.set_result_text)
-		self.main_plot_widget.static_plot.analysis_requested.connect(self.analysis_controller.perform_fft_analysis)
+
+		self.main_plot_widget.static_plot.analysis_requested.connect(self._handle_analysis_request)
+
+		self.main_plot_widget.control_output.function_combo.currentTextChanged.connect(self._on_function_selection_changed)
 
 		# Connect signals for new widgets
 		self.status_button_group.buttonClicked.connect(self._on_status_button_changed)
 		self.substrate_combo.aboutToShowPopup.connect(self._populate_substrate_combo)
 		self.material_combo.aboutToShowPopup.connect(self._populate_material_combo)
+
+	@Slot(np.ndarray, np.ndarray)
+	def _handle_analysis_request(self, x_data, y_data):
+		"""
+		Checks which analysis function is selected and calls the appropriate
+		function in the controller, or clears the output if none is selected.
+		"""
+		selected_function = self.main_plot_widget.control_output.function_combo.currentText()
+
+		if selected_function == "亮度振荡分析":
+			self.analysis_controller.perform_fft_analysis(x_data, y_data)
+		else:
+			self.main_plot_widget.control_output.set_result_text("")
+
+	@Slot(str)
+	def _on_function_selection_changed(self, text):
+		"""
+		Enables or disables the continuous analysis based on dropdown selection.
+		"""
+		if text == "亮度振荡分析":
+			self.analysis_controller.set_analysis_enabled(True)
+		else:
+			self.analysis_controller.set_analysis_enabled(False)
 
 	def closeEvent(self, event):
 		print("正在关闭窗口并清理所有线程...")
@@ -352,6 +381,13 @@ class MainWindow(QMainWindow):
 			return
 		self.video_recorder = VideoRecorder(self)
 		self.video_recorder.error.connect(self.show_error_message)
+
+		# MODIFICATION: Connect the correct signal for recording
+		if isinstance(source, CameraController):
+			source.new_frame_for_recording.connect(self.video_recorder.add_frame)
+		elif isinstance(source, VideoPlayerController):
+			source.new_frame_ready.connect(self.video_recorder.add_frame)
+
 		if self.video_recorder.start_recording(full_filepath, fps, frame_size):
 			self._update_recording_ui(True)
 		else:
@@ -360,7 +396,21 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_stop_recording(self):
-		if self.video_recorder: self.video_recorder.stop_recording(); self.video_recorder = None; self._update_recording_ui(False)
+		if self.video_recorder:
+			# MODIFICATION: Disconnect the signal before stopping
+			source = self.camera_controller or self.video_player_controller
+			if source:
+				try:
+					if isinstance(source, CameraController):
+						source.new_frame_for_recording.disconnect(self.video_recorder.add_frame)
+					elif isinstance(source, VideoPlayerController):
+						source.new_frame_ready.disconnect(self.video_recorder.add_frame)
+				except RuntimeError:
+					# This can happen if the connection was already broken, which is fine.
+					pass
+			self.video_recorder.stop_recording()
+			self.video_recorder = None
+			self._update_recording_ui(False)
 
 	def _create_preview_panel(self):
 		self.image_view = VideoPreviewLabel()
