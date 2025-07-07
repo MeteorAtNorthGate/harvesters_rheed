@@ -43,7 +43,7 @@ class MainWindow(QMainWindow):
 
 	def __init__(self):
 		super().__init__()
-		self.setWindowTitle("Rheed_analyzer_v0.36_mod")  # Version updated
+		self.setWindowTitle("Rheed_analyzer_v0.40")  # Version updated
 		self.resize(1600, 900)
 
 		self.load_app_config()
