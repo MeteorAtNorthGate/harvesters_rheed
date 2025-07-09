@@ -2,6 +2,8 @@
 # 作用: 定义应用程序的主窗口界面，使用新的VideoPreviewLabel替换旧的pyqtgraph预览区。
 
 import os
+import subprocess
+import sys
 from PySide6.QtCore import Qt, Slot, QTimer, QThread, Signal
 from PySide6.QtWidgets import (
 	QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -160,6 +162,7 @@ class MainWindow(QMainWindow):
 		self.find_button.clicked.connect(self._on_find_cameras)
 		self.start_button.clicked.connect(self._on_start_capture)
 		self.stop_button.clicked.connect(self._on_stop_capture)
+		self.help_button.clicked.connect(self._on_show_help)  # --- NEW CONNECTION ---
 		self.camera_list_widget.currentItemChanged.connect(self._on_camera_selected)
 
 		self.add_video_button.clicked.connect(self._on_add_video)
@@ -191,6 +194,10 @@ class MainWindow(QMainWindow):
 		self.status_button_group.buttonClicked.connect(self._on_status_button_changed)
 		self.substrate_combo.aboutToShowPopup.connect(self._populate_substrate_combo)
 		self.material_combo.aboutToShowPopup.connect(self._populate_material_combo)
+
+		# --- NEW CONNECTIONS ---
+		self.edit_substrate_button.clicked.connect(self._on_edit_substrate_list)
+		self.edit_material_button.clicked.connect(self._on_edit_material_list)
 
 	@Slot(np.ndarray, np.ndarray)
 	def _handle_analysis_request(self, x_data, y_data):
@@ -425,11 +432,19 @@ class MainWindow(QMainWindow):
 		self.find_button = QPushButton("查找相机")
 		self.start_button = QPushButton("启动相机")
 		self.stop_button = QPushButton("停止相机")
+		self.help_button = QPushButton("?")  # --- NEW BUTTON ---
+
+		# --- STYLE FOR NEW BUTTON ---
+		self.help_button.setToolTip("打开使用说明文件 (使用说明.txt)")
+		self.help_button.setFixedWidth(35)
+
 		self.start_button.setEnabled(False)
 		self.stop_button.setEnabled(False)
+
 		top_bar_layout.addWidget(self.find_button)
 		top_bar_layout.addWidget(self.start_button)
 		top_bar_layout.addWidget(self.stop_button)
+		top_bar_layout.addWidget(self.help_button)  # --- ADDED TO LAYOUT ---
 		top_bar_layout.addStretch()
 		parent_layout.addLayout(top_bar_layout)
 
@@ -514,6 +529,9 @@ class MainWindow(QMainWindow):
 		self.substrate_combo.setToolTip("选择衬底类型 (从substrate.txt读取)")
 		self.substrate_combo.setFixedWidth(150)
 		substrate_v_layout.addWidget(self.substrate_combo)
+		# --- NEW BUTTON ---
+		self.edit_substrate_button = QPushButton("编辑衬底列表...")
+		substrate_v_layout.addWidget(self.edit_substrate_button)
 		substrate_v_layout.addStretch(1)
 		layout.addLayout(substrate_v_layout, 0, 4, 2, 1)
 
@@ -538,6 +556,9 @@ class MainWindow(QMainWindow):
 		self.material_combo.setToolTip("选择生长材料 (从epi_layer.txt读取)")
 		self.material_combo.setFixedWidth(300)
 		material_v_layout.addWidget(self.material_combo)
+		# --- NEW BUTTON ---
+		self.edit_material_button = QPushButton("编辑外延材料列表...")
+		material_v_layout.addWidget(self.edit_material_button)
 		material_v_layout.addStretch(1)
 		layout.addLayout(material_v_layout, 0, 6, 3, 1)
 
@@ -671,7 +692,78 @@ class MainWindow(QMainWindow):
 		directory = QFileDialog.getExistingDirectory(self, "选择视频保存文件夹")
 		if directory: self.save_path_edit.setText(directory.replace("\\", "/"))
 
+	def _open_file_for_editing(self, filename, default_content=""):
+		"""通用函数: 使用系统默认程序打开文件，如果文件不存在则创建它。"""
+		try:
+			if not os.path.exists(filename):
+				# In case the user requests a file name with English based on user profile.
+				# This check ensures that the file is created with the correct encoding.
+				if '使用说明' in filename:
+					QMessageBox.information(self, "提示", f"文件 {filename} 未找到。\n将为您创建一个包含基本说明的新文件。")
+				else:
+					QMessageBox.information(self, "提示", f"文件 {filename} 未找到。\n将为您创建一个新文件。")
+
+				with open(filename, 'w', encoding='utf-8') as f:
+					f.write(f"# 在此文件中添加条目，每行一个。\n{default_content}")
+
+			if sys.platform == "win32":
+				os.startfile(filename)
+			elif sys.platform == "darwin":  # macOS
+				subprocess.call(["open", filename])
+			else:  # linux
+				subprocess.call(["xdg-open", filename])
+		except Exception as e:
+			self.show_error_message(f"无法打开文件 {filename}:\n{e}")
+
 	# --- NEW HELPER METHODS ---
+	@Slot()
+	def _on_show_help(self):
+		"""打开帮助文件 (使用说明.txt)。"""
+		default_text = """# RHEED 分析软件使用说明
+
+## 1. 相机操作
+- 点击“查找相机”以发现连接的设备。
+- 从列表中选择一台相机。
+- 点击“启动相机”开始预览。
+- 点击“停止相机”结束预览。
+
+## 2. 视频文件操作
+- 点击“+”按钮添加视频文件。
+- 从列表中选择一个视频。
+- 使用 ▶, ❚❚, ■ 按钮控制播放。
+
+## 3. 录制
+- 填写“炉号”。
+- 选择当前“状态”（如脱氧前、生长中等）。
+- 如果适用，选择“衬底”或“外延材料”。
+- 点击“开始录制”来保存视频流。
+- 录制的视频将保存在 “保存路径”/“炉号”/ 目录下。
+
+## 4. 分析
+- 在下拉菜单中选择“亮度振荡分析”。
+- 点击“选择分析区域”并在预览窗口中拖拽一个矩形区域。
+- 动态强度曲线将实时显示。
+- 静态图表显示FFT分析结果。
+
+## 5. 列表编辑
+- 点击“编辑衬底列表...”或“编辑外延材料列表...”按钮，可以直接修改文本文件，保存后下拉框内容会自动更新。
+"""
+		self._open_file_for_editing('使用说明.txt', default_text)
+
+	@Slot()
+	def _on_edit_substrate_list(self):
+		"""打开衬底列表文件 (substrate.txt) 进行编辑。"""
+		self.substrate_combo.hidePopup()
+		default_text = "#请用-连接衬底材料和钼托规格\nInAs\nGaSb\nInAs-1X4\n"
+		self._open_file_for_editing('substrate.txt', default_text)
+
+	@Slot()
+	def _on_edit_material_list(self):
+		"""打开外延材料列表文件 (epi_layer.txt) 进行编辑。"""
+		self.material_combo.hidePopup()
+		default_text = "#请用下划线而不是斜杠分割超晶格,斜杠不可以用于windows文件名\nInAs\nInAs_GaSb\n"
+		self._open_file_for_editing('epi_layer.txt', default_text)
+
 	def _read_items_from_file(self, file_path):
 		"""Reads items for comboboxes from a text file, ignoring comments."""
 		items = []
@@ -725,6 +817,9 @@ class MainWindow(QMainWindow):
 
 		self.substrate_combo.setEnabled(is_deo_step)
 		self.material_combo.setEnabled(is_growth_step)
+
+		#self.edit_substrate_button.setEnabled(is_deo_step)
+		#self.edit_material_button.setEnabled(is_growth_step)
 
 		# Clear selection in the disabled combo box
 		if not is_deo_step:
