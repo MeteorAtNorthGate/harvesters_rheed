@@ -13,3 +13,4 @@ substrate.txt
 # 忽略 pyinstaller打包
 build/
 dist/
+main_app.spec
