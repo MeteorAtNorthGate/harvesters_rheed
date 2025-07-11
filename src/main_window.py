@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, Slot, QTimer, QThread, Signal
 from PySide6.QtWidgets import (
 	QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
 	QPushButton, QLabel, QMessageBox, QSplitter, QListWidget, QListWidgetItem,
-	QFrame, QFileDialog, QLineEdit, QComboBox, QButtonGroup
+	QFrame, QFileDialog, QLineEdit, QComboBox, QButtonGroup, QAbstractButton
 )
 import numpy as np
 
@@ -21,8 +21,9 @@ from plotting_widgets import MainPlottingWidget
 from analysis_controller import AnalysisController
 from video_preview_widget import VideoPreviewLabel
 
-PREVIEW_FPS = 30
 
+# --- 移除: PREVIEW_FPS 常量不再需要 ---
+# PREVIEW_FPS = 60
 
 class DynamicComboBox(QComboBox):
 	"""
@@ -45,7 +46,7 @@ class MainWindow(QMainWindow):
 
 	def __init__(self):
 		super().__init__()
-		self.setWindowTitle("Rheed_analyzer_v0.40")  # Version updated
+		self.setWindowTitle("Rheed_analyzer")
 		self.resize(1600, 900)
 
 		self.load_app_config()
@@ -72,9 +73,9 @@ class MainWindow(QMainWindow):
 		central_widget.setLayout(main_layout)
 		self.setCentralWidget(central_widget)
 		self._create_top_bar(main_layout)
-		main_v_splitter = QSplitter(Qt.Vertical)
-		top_h_splitter = QSplitter(Qt.Horizontal)
-		left_v_splitter = QSplitter(Qt.Vertical)
+		main_v_splitter = QSplitter(Qt.Orientation.Vertical)
+		top_h_splitter = QSplitter(Qt.Orientation.Horizontal)
+		left_v_splitter = QSplitter(Qt.Orientation.Vertical)
 		camera_panel = self._create_camera_list_panel()
 		video_panel = self._create_video_list_panel()
 		left_v_splitter.addWidget(camera_panel)
@@ -108,7 +109,7 @@ class MainWindow(QMainWindow):
 		current_item = self.camera_list_widget.currentItem()
 		if not current_item or not self.harvester: return
 		self._stop_all_sources()
-		device_index = current_item.data(Qt.UserRole)
+		device_index = current_item.data(Qt.ItemDataRole.UserRole)
 
 		self.camera_controller = CameraController(harvester=self.harvester, device_index=device_index, fps=self.camera_fps)
 		self.camera_controller.error_occurred.connect(self.show_error_message)
@@ -117,7 +118,8 @@ class MainWindow(QMainWindow):
 		self.camera_controller.start_capture()
 		self._on_source_started()
 
-		self.camera_preview_timer.start(1000 // PREVIEW_FPS)
+		# --- 修改: 使用从配置加载的 self.preview_fps ---
+		self.camera_preview_timer.start(1000 // self.preview_fps)
 
 	def _stop_all_sources(self):
 		if self.camera_preview_timer.isActive():
@@ -149,8 +151,6 @@ class MainWindow(QMainWindow):
 
 	def _display_frame(self, frame):
 		try:
-			# MODIFICATION: Recording is no longer handled here.
-			# It's driven by its own signal from the controller.
 			self.current_frame_for_recording = frame
 			rgb_frame = frame[..., ::-1]
 			self.image_view.set_frame(rgb_frame)
@@ -162,7 +162,7 @@ class MainWindow(QMainWindow):
 		self.find_button.clicked.connect(self._on_find_cameras)
 		self.start_button.clicked.connect(self._on_start_capture)
 		self.stop_button.clicked.connect(self._on_stop_capture)
-		self.help_button.clicked.connect(self._on_show_help)  # --- NEW CONNECTION ---
+		self.help_button.clicked.connect(self._on_show_help)
 		self.camera_list_widget.currentItemChanged.connect(self._on_camera_selected)
 
 		self.add_video_button.clicked.connect(self._on_add_video)
@@ -175,6 +175,8 @@ class MainWindow(QMainWindow):
 		self.browse_path_button.clicked.connect(self._on_browse_save_path)
 		self.start_record_button.clicked.connect(self._on_start_recording)
 		self.stop_record_button.clicked.connect(self._on_stop_recording)
+
+		self.save_path_edit.editingFinished.connect(self._on_save_path_changed)
 
 		self.main_plot_widget.control_output.select_area_button.clicked.connect(self.image_view.enter_selection_mode)
 		self.image_view.roi_defined.connect(self.analysis_controller.set_roi)
@@ -190,21 +192,15 @@ class MainWindow(QMainWindow):
 
 		self.main_plot_widget.control_output.function_combo.currentTextChanged.connect(self._on_function_selection_changed)
 
-		# Connect signals for new widgets
 		self.status_button_group.buttonClicked.connect(self._on_status_button_changed)
 		self.substrate_combo.aboutToShowPopup.connect(self._populate_substrate_combo)
 		self.material_combo.aboutToShowPopup.connect(self._populate_material_combo)
 
-		# --- NEW CONNECTIONS ---
 		self.edit_substrate_button.clicked.connect(self._on_edit_substrate_list)
 		self.edit_material_button.clicked.connect(self._on_edit_material_list)
 
 	@Slot(np.ndarray, np.ndarray)
 	def _handle_analysis_request(self, x_data, y_data):
-		"""
-		Checks which analysis function is selected and calls the appropriate
-		function in the controller, or clears the output if none is selected.
-		"""
 		selected_function = self.main_plot_widget.control_output.function_combo.currentText()
 
 		if selected_function == "亮度振荡分析":
@@ -214,15 +210,14 @@ class MainWindow(QMainWindow):
 
 	@Slot(str)
 	def _on_function_selection_changed(self, text):
-		"""
-		Enables or disables the continuous analysis based on dropdown selection.
-		"""
 		if text == "亮度振荡分析":
 			self.analysis_controller.set_analysis_enabled(True)
 		else:
 			self.analysis_controller.set_analysis_enabled(False)
 
 	def closeEvent(self, event):
+		self._on_save_path_changed()
+
 		print("正在关闭窗口并清理所有线程...")
 
 		self._on_stop_recording()
@@ -291,13 +286,30 @@ class MainWindow(QMainWindow):
 			self.cti_path = config_manager.get_config_value('Paths', 'cti_path')
 			fps_str = config_manager.get_config_value('Camera', 'fps', '30')
 			self.camera_fps = int(fps_str)
+
+			home_dir = os.path.expanduser('~')
+			default_save_path = os.path.join(home_dir, "Desktop", "GrowthRecordings")
+			self.save_path = config_manager.get_config_value('Paths', 'save_path', default_save_path)
+
+			# --- 新增: 从config.ini加载预览帧率 ---
+			preview_fps_str = config_manager.get_config_value('Display', 'preview_fps', '60')
+			self.preview_fps = int(preview_fps_str)
+			if self.preview_fps <= 0:  # 添加一个安全检查，防止配置错误
+				print(f"警告: 无效的预览帧率 '{preview_fps_str}', 将重置为 60。")
+				self.preview_fps = 60
+
 			print("配置加载成功:")
 			print(f"  - CTI Path: {self.cti_path}")
 			print(f"  - Camera FPS: {self.camera_fps}")
+			print(f"  - Save Path: {self.save_path}")
+			print(f"  - Preview FPS: {self.preview_fps}")
+
 		except Exception as e:
 			print(f"加载config.ini时出错: {e}, 将使用默认值。")
 			self.cti_path = ""
 			self.camera_fps = 30
+			self.save_path = os.path.join(os.path.expanduser('~'), "Desktop", "GrowthRecordings")
+			self.preview_fps = 60  # 设置默认回退值
 			QMessageBox.warning(self, "配置错误", f"加载 config.ini 失败: {e}\n将使用默认设置。")
 
 	def _on_find_cameras(self):
@@ -308,7 +320,7 @@ class MainWindow(QMainWindow):
 		if self.harvester and self.harvester.device_info_list:
 			for i, di in enumerate(self.harvester.device_info_list):
 				item = QListWidgetItem(f"相机 {i} ({di.model})")
-				item.setData(Qt.UserRole, i)
+				item.setData(Qt.ItemDataRole.UserRole, i)
 				self.camera_list_widget.addItem(item)
 		else:
 			QMessageBox.warning(self, "未找到设备", f"在路径 '{self.cti_path}' 未能发现任何相机设备。\n请检查 config.ini 中的路径和相机连接。")
@@ -322,7 +334,7 @@ class MainWindow(QMainWindow):
 		current_item = self.video_list_widget.currentItem()
 		if not current_item: return
 		self._stop_all_sources()
-		filepath = current_item.data(Qt.UserRole)
+		filepath = current_item.data(Qt.ItemDataRole.UserRole)
 		self.video_player_controller = VideoPlayerController()
 		self.video_player_controller.new_frame_ready.connect(self.update_video_preview)
 		self.video_player_controller.error_occurred.connect(self.show_error_message)
@@ -343,7 +355,6 @@ class MainWindow(QMainWindow):
 			self.show_error_message("请填写“炉号”和“保存路径”。")
 			return
 
-		# --- MODIFIED FILENAME LOGIC ---
 		checked_button = self.status_button_group.checkedButton()
 		if not checked_button:
 			self.show_error_message("请选择一个状态。")
@@ -357,7 +368,6 @@ class MainWindow(QMainWindow):
 			status_map = {"脱氧前": "non", "脱氧后": "deo", "开始生长": "start", "生长中": "growth", "结束生长": "end"}
 			status_filename = status_map.get(status_text, status_text)
 
-			# Append substrate or material if selected
 			if status_text in ["脱氧前", "脱氧后"]:
 				substrate = self.substrate_combo.currentText()
 				if substrate:
@@ -366,7 +376,6 @@ class MainWindow(QMainWindow):
 				material = self.material_combo.currentText()
 				if material:
 					status_filename += f"_{material}"
-		# --- END OF MODIFIED LOGIC ---
 
 		furnace_dir = os.path.join(base_save_path, furnace_id)
 		try:
@@ -389,7 +398,6 @@ class MainWindow(QMainWindow):
 		self.video_recorder = VideoRecorder(self)
 		self.video_recorder.error.connect(self.show_error_message)
 
-		# MODIFICATION: Connect the correct signal for recording
 		if isinstance(source, CameraController):
 			source.new_frame_for_recording.connect(self.video_recorder.add_frame)
 		elif isinstance(source, VideoPlayerController):
@@ -404,7 +412,6 @@ class MainWindow(QMainWindow):
 	@Slot()
 	def _on_stop_recording(self):
 		if self.video_recorder:
-			# MODIFICATION: Disconnect the signal before stopping
 			source = self.camera_controller or self.video_player_controller
 			if source:
 				try:
@@ -413,7 +420,6 @@ class MainWindow(QMainWindow):
 					elif isinstance(source, VideoPlayerController):
 						source.new_frame_ready.disconnect(self.video_recorder.add_frame)
 				except RuntimeError:
-					# This can happen if the connection was already broken, which is fine.
 					pass
 			self.video_recorder.stop_recording()
 			self.video_recorder = None
@@ -429,46 +435,54 @@ class MainWindow(QMainWindow):
 
 	def _create_top_bar(self, parent_layout):
 		top_bar_layout = QHBoxLayout()
-		self.find_button = QPushButton("查找相机")
-		self.start_button = QPushButton("启动相机")
-		self.stop_button = QPushButton("停止相机")
-		self.help_button = QPushButton("?")  # --- NEW BUTTON ---
+		self.help_button = QPushButton("?")
 
-		# --- STYLE FOR NEW BUTTON ---
 		self.help_button.setToolTip("打开使用说明文件 (使用说明.txt)")
 		self.help_button.setFixedWidth(35)
 
-		self.start_button.setEnabled(False)
-		self.stop_button.setEnabled(False)
-
-		top_bar_layout.addWidget(self.find_button)
-		top_bar_layout.addWidget(self.start_button)
-		top_bar_layout.addWidget(self.stop_button)
-		top_bar_layout.addWidget(self.help_button)  # --- ADDED TO LAYOUT ---
+		top_bar_layout.addWidget(self.help_button)
 		top_bar_layout.addStretch()
 		parent_layout.addLayout(top_bar_layout)
 
 	def _create_camera_list_panel(self):
 		panel = QFrame()
-		panel.setFrameShape(QFrame.StyledPanel)
+		panel.setFrameShape(QFrame.Shape.StyledPanel)
 		layout = QVBoxLayout(panel)
 		layout.setContentsMargins(2, 2, 2, 2)
 		layout.addWidget(QLabel("可用相机列表:"))
 		self.camera_list_widget = QListWidget()
 		layout.addWidget(self.camera_list_widget)
+
+		button_layout = QHBoxLayout()
+		self.find_button = QPushButton("查找相机")
+		self.start_button = QPushButton("启动相机")
+		self.stop_button = QPushButton("停止相机")
+
+		self.start_button.setEnabled(False)
+		self.stop_button.setEnabled(False)
+
+		for btn in [self.find_button, self.start_button, self.stop_button]:
+			btn.setMinimumHeight(30)
+
+		button_layout.addWidget(self.find_button)
+		button_layout.addWidget(self.start_button)
+		button_layout.addWidget(self.stop_button)
+		button_layout.addStretch()
+
+		layout.addLayout(button_layout)
 		return panel
 
 	def _create_video_list_panel(self):
 		panel = QFrame()
-		panel.setFrameShape(QFrame.StyledPanel)
+		panel.setFrameShape(QFrame.Shape.StyledPanel)
 		layout = QVBoxLayout(panel)
 		layout.setContentsMargins(2, 2, 2, 2)
 		layout.addWidget(QLabel("视频文件列表:"))
 		self.video_list_widget = QListWidget()
 		layout.addWidget(self.video_list_widget)
 		button_layout = QHBoxLayout()
-		self.add_video_button = QPushButton("+")
-		self.remove_video_button = QPushButton("-")
+		self.add_video_button = QPushButton("添加视频")
+		self.remove_video_button = QPushButton("移除视频")
 		self.play_video_button = QPushButton("▶")
 		self.pause_video_button = QPushButton("❚❚")
 		self.stop_video_button = QPushButton("■")
@@ -493,24 +507,20 @@ class MainWindow(QMainWindow):
 
 	def _create_bottom_interaction_panel(self):
 		panel = QFrame()
-		panel.setFrameShape(QFrame.StyledPanel)
+		panel.setFrameShape(QFrame.Shape.StyledPanel)
 		layout = QGridLayout(panel)
 		layout.setSpacing(10)
 
-		# Row 0: Furnace ID
-		layout.addWidget(QLabel("炉号:"), 0, 0, Qt.AlignRight)
+		layout.addWidget(QLabel("炉号:"), 0, 0, Qt.AlignmentFlag.AlignRight)
 		self.furnace_id_edit = QLineEdit()
 		self.furnace_id_edit.setMaximumWidth(200)
 		layout.addWidget(self.furnace_id_edit, 0, 1)
 
-		# Status Label
-		layout.addWidget(QLabel("状态:"), 0, 2, Qt.AlignRight)
+		layout.addWidget(QLabel("状态:"), 0, 2, Qt.AlignmentFlag.AlignRight)
 
-		# --- STATUS BUTTONS AND COMBOBOXES ---
 		self.status_button_group = QButtonGroup(self)
 		self.status_button_group.setExclusive(True)
 
-		# Group 1: Deoxidation
 		deo_layout = QVBoxLayout()
 		btn_non = QPushButton("脱氧前")
 		btn_non.setMinimumHeight(30)
@@ -522,20 +532,17 @@ class MainWindow(QMainWindow):
 			deo_layout.addWidget(btn)
 		layout.addLayout(deo_layout, 0, 3, 2, 1)
 
-		# Substrate ComboBox with Spacer
 		substrate_v_layout = QVBoxLayout()
 		substrate_v_layout.addSpacing(7)
 		self.substrate_combo = DynamicComboBox()
 		self.substrate_combo.setToolTip("选择衬底类型 (从substrate.txt读取)")
 		self.substrate_combo.setFixedWidth(150)
 		substrate_v_layout.addWidget(self.substrate_combo)
-		# --- NEW BUTTON ---
 		self.edit_substrate_button = QPushButton("编辑衬底列表...")
 		substrate_v_layout.addWidget(self.edit_substrate_button)
 		substrate_v_layout.addStretch(1)
 		layout.addLayout(substrate_v_layout, 0, 4, 2, 1)
 
-		# Group 2: Growth
 		growth_layout = QVBoxLayout()
 		btn_start = QPushButton("开始生长")
 		btn_start.setMinimumHeight(30)
@@ -549,14 +556,12 @@ class MainWindow(QMainWindow):
 			growth_layout.addWidget(btn)
 		layout.addLayout(growth_layout, 0, 5, 3, 1)
 
-		# Material ComboBox with Spacer
 		material_v_layout = QVBoxLayout()
 		material_v_layout.addSpacing(7)
 		self.material_combo = DynamicComboBox()
 		self.material_combo.setToolTip("选择生长材料 (从epi_layer.txt读取)")
 		self.material_combo.setFixedWidth(300)
 		material_v_layout.addWidget(self.material_combo)
-		# --- NEW BUTTON ---
 		self.edit_material_button = QPushButton("编辑外延材料列表...")
 		material_v_layout.addWidget(self.edit_material_button)
 		material_v_layout.addStretch(1)
@@ -564,7 +569,6 @@ class MainWindow(QMainWindow):
 
 		btn_non.setChecked(True)
 
-		# --- Record Buttons ---
 		self.start_record_button = QPushButton("开始录制")
 		self.stop_record_button = QPushButton("结束录制")
 		self.stop_record_button.setEnabled(False)
@@ -573,20 +577,16 @@ class MainWindow(QMainWindow):
 		layout.addWidget(self.start_record_button, 0, 7)
 		layout.addWidget(self.stop_record_button, 1, 7)
 
-		# --- MOVED STATUS LABEL ---
 		self.bottom_status_label = QLabel("备用 (打印机器学习模型预测状态等)")
-		self.bottom_status_label.setFrameStyle(QFrame.Panel | QFrame.Sunken)
-		self.bottom_status_label.setAlignment(Qt.AlignCenter)
+		self.bottom_status_label.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Sunken)
+		self.bottom_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 		layout.addWidget(self.bottom_status_label, 0, 9, 5, 2)
 
-		# --- WIDGET PLACEMENT ON NEW ROWS ---
-		# Row 3: Other status
-		layout.addWidget(QLabel("其他状态:"), 3, 0, Qt.AlignRight)
+		layout.addWidget(QLabel("其他状态:"), 3, 0, Qt.AlignmentFlag.AlignRight)
 		self.other_status_edit = QLineEdit()
 		layout.addWidget(self.other_status_edit, 3, 1, 1, 8)
 
-		# Row 4: Save Path
-		layout.addWidget(QLabel("保存路径:"), 4, 0, Qt.AlignRight)
+		layout.addWidget(QLabel("保存路径:"), 4, 0, Qt.AlignmentFlag.AlignRight)
 		self.save_path_edit = QLineEdit()
 		self.browse_path_button = QPushButton("浏览...")
 		layout.addWidget(self.save_path_edit, 4, 1, 1, 7)
@@ -599,9 +599,7 @@ class MainWindow(QMainWindow):
 
 	def _set_default_values(self):
 		self.furnace_id_edit.setText("AI2233")
-		home_dir = os.path.expanduser('~')
-		default_save_path = os.path.join(home_dir, "Desktop", "GrowthRecordings")
-		self.save_path_edit.setText(default_save_path.replace("\\", "/"))
+		self.save_path_edit.setText(self.save_path.replace("\\", "/"))
 
 	def _update_recording_ui(self, is_recording):
 		self.start_record_button.setEnabled(not is_recording)
@@ -675,11 +673,12 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_add_video(self):
-		files, _ = QFileDialog.getOpenFileNames(self, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mov *.mkv)")
+		current_path = self.save_path_edit.text()
+		files, _ = QFileDialog.getOpenFileNames(self, "选择视频文件", current_path, "视频文件 (*.mp4 *.avi *.mov *.mkv)")
 		if files:
 			for file_path in files:
 				item = QListWidgetItem(os.path.basename(file_path))
-				item.setData(Qt.UserRole, file_path)
+				item.setData(Qt.ItemDataRole.UserRole, file_path)
 				self.video_list_widget.addItem(item)
 
 	@Slot()
@@ -689,15 +688,22 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_browse_save_path(self):
-		directory = QFileDialog.getExistingDirectory(self, "选择视频保存文件夹")
-		if directory: self.save_path_edit.setText(directory.replace("\\", "/"))
+		current_path = self.save_path_edit.text()
+		directory = QFileDialog.getExistingDirectory(self, "选择视频保存文件夹", current_path)
+		if directory:
+			new_path = directory.replace("\\", "/")
+			self.save_path_edit.setText(new_path)
+			self._on_save_path_changed()
+
+	@Slot()
+	def _on_save_path_changed(self):
+		new_path = self.save_path_edit.text()
+		config_manager.set_config_value('Paths', 'save_path', new_path)
+		print(f"保存路径已更新到 config.ini: {new_path}")
 
 	def _open_file_for_editing(self, filename, default_content=""):
-		"""通用函数: 使用系统默认程序打开文件，如果文件不存在则创建它。"""
 		try:
 			if not os.path.exists(filename):
-				# In case the user requests a file name with English based on user profile.
-				# This check ensures that the file is created with the correct encoding.
 				if '使用说明' in filename:
 					QMessageBox.information(self, "提示", f"文件 {filename} 未找到。\n将为您创建一个包含基本说明的新文件。")
 				else:
@@ -708,17 +714,15 @@ class MainWindow(QMainWindow):
 
 			if sys.platform == "win32":
 				os.startfile(filename)
-			elif sys.platform == "darwin":  # macOS
+			elif sys.platform == "darwin":
 				subprocess.call(["open", filename])
-			else:  # linux
+			else:
 				subprocess.call(["xdg-open", filename])
 		except Exception as e:
 			self.show_error_message(f"无法打开文件 {filename}:\n{e}")
 
-	# --- NEW HELPER METHODS ---
 	@Slot()
 	def _on_show_help(self):
-		"""打开帮助文件 (使用说明.txt)。"""
 		default_text = """# RHEED 分析软件使用说明
 
 ## 1. 相机操作
@@ -728,7 +732,8 @@ class MainWindow(QMainWindow):
 - 点击“停止相机”结束预览。
 
 ## 2. 视频文件操作
-- 点击“+”按钮添加视频文件。
+- 点击“添加视频”按钮添加视频文件。
+- 点击“移除视频”按钮移除选中的文件。
 - 从列表中选择一个视频。
 - 使用 ▶, ❚❚, ■ 按钮控制播放。
 
@@ -752,27 +757,20 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_edit_substrate_list(self):
-		"""打开衬底列表文件 (substrate.txt) 进行编辑。"""
 		self.substrate_combo.hidePopup()
 		default_text = "#请用-连接衬底材料和钼托规格\nInAs\nGaSb\nInAs-1X4\n"
 		self._open_file_for_editing('substrate.txt', default_text)
 
 	@Slot()
 	def _on_edit_material_list(self):
-		"""打开外延材料列表文件 (epi_layer.txt) 进行编辑。"""
 		self.material_combo.hidePopup()
 		default_text = "#请用下划线而不是斜杠分割超晶格,斜杠不可以用于windows文件名\nInAs\nInAs_GaSb\n"
 		self._open_file_for_editing('epi_layer.txt', default_text)
 
 	def _read_items_from_file(self, file_path):
-		"""Reads items for comboboxes from a text file, ignoring comments."""
 		items = []
 		if not os.path.exists(file_path):
 			print(f"配置文件缺失: {file_path}, 列表将为空。")
-			# You might want to create a default file here
-			# with open(file_path, 'w', encoding='utf-8') as f:
-			#     f.write("# 这是一个示例文件\n")
-			#     f.write("示例条目1\n")
 			return items
 		try:
 			with open(file_path, 'r', encoding='utf-8') as f:
@@ -786,10 +784,9 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _populate_substrate_combo(self):
-		"""Populates the substrate combobox from substrate.txt."""
 		current_selection = self.substrate_combo.currentText()
 		self.substrate_combo.clear()
-		self.substrate_combo.addItem("")  # Add a blank item first
+		self.substrate_combo.addItem("")
 		items = self._read_items_from_file('substrate.txt')
 		self.substrate_combo.addItems(items)
 		index = self.substrate_combo.findText(current_selection)
@@ -798,19 +795,18 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _populate_material_combo(self):
-		"""Populates the material combobox from Growing_what.txt."""
 		current_selection = self.material_combo.currentText()
 		self.material_combo.clear()
-		self.material_combo.addItem("")  # Add a blank item first
+		self.material_combo.addItem("")
 		items = self._read_items_from_file('epi_layer.txt')
 		self.material_combo.addItems(items)
 		index = self.material_combo.findText(current_selection)
 		if index != -1:
 			self.material_combo.setCurrentIndex(index)
 
-	@Slot('QAbstractButton')
+	Slot(QAbstractButton)
+
 	def _on_status_button_changed(self, button):
-		"""Enables/disables comboboxes based on the selected status."""
 		text = button.text()
 		is_deo_step = text in ["脱氧前", "脱氧后"]
 		is_growth_step = text in ["开始生长", "生长中", "结束生长"]
@@ -818,11 +814,7 @@ class MainWindow(QMainWindow):
 		self.substrate_combo.setEnabled(is_deo_step)
 		self.material_combo.setEnabled(is_growth_step)
 
-		#self.edit_substrate_button.setEnabled(is_deo_step)
-		#self.edit_material_button.setEnabled(is_growth_step)
-
-		# Clear selection in the disabled combo box
 		if not is_deo_step:
-			self.substrate_combo.setCurrentIndex(0)  # Set to blank
+			self.substrate_combo.setCurrentIndex(0)
 		if not is_growth_step:
-			self.material_combo.setCurrentIndex(0)  # set to blank
+			self.material_combo.setCurrentIndex(0)

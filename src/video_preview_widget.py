@@ -18,7 +18,7 @@ class VideoPreviewLabel(QLabel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet("background-color: #202020")
 
         self._current_pixmap = None
@@ -46,7 +46,7 @@ class VideoPreviewLabel(QLabel):
 
             h, w, ch = frame.shape
             bytes_per_line = ch * w
-            qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
 
             # 创建 QPixmap 并存储，然后触发重绘事件
             self._current_pixmap = QPixmap.fromImage(qt_image)
@@ -60,7 +60,7 @@ class VideoPreviewLabel(QLabel):
         公开的槽函数，用于启动ROI选择模式。
         """
         self._is_in_selection_mode = True
-        QApplication.setOverrideCursor(Qt.CrossCursor)
+        QApplication.setOverrideCursor(Qt.CursorShape.CrossCursor)
         print("VideoPreviewLabel: 已进入ROI选择模式。")
 
     def _exit_selection_mode(self):
@@ -76,7 +76,7 @@ class VideoPreviewLabel(QLabel):
         print("VideoPreviewLabel: 已退出ROI选择模式。")
 
     def mousePressEvent(self, event):
-        if self._is_in_selection_mode and event.button() == Qt.LeftButton:
+        if self._is_in_selection_mode and event.button() == Qt.MouseButton.LeftButton:
             self._is_drawing = True
             self._roi_start_pos = event.position().toPoint()
             self._roi_end_pos = self._roi_start_pos
@@ -94,7 +94,7 @@ class VideoPreviewLabel(QLabel):
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self._is_drawing and event.button() == Qt.LeftButton:
+        if self._is_drawing and event.button() == Qt.MouseButton.LeftButton:
             roi_rect_widget = QRect(self._roi_start_pos, self._roi_end_pos).normalized()
 
             # 将控件坐标系的ROI转换为图像像素坐标系的ROI
@@ -118,20 +118,22 @@ class VideoPreviewLabel(QLabel):
 
         if self._current_pixmap and not self._current_pixmap.isNull():
             # 计算pixmap在label中实际显示的区域（保持宽高比）
-            scaled_pixmap = self._current_pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled_pixmap = self._current_pixmap.scaled(self.size(),
+                                                        Qt.AspectRatioMode.KeepAspectRatio,
+                                                        Qt.TransformationMode.SmoothTransformation)
             x = (self.width() - scaled_pixmap.width()) / 2
             y = (self.height() - scaled_pixmap.height()) / 2
             painter.drawPixmap(QPoint(x, y), scaled_pixmap)
 
             # 如果正在绘制ROI，则在pixmap上层绘制矩形
             if self._is_drawing:
-                pen = QPen(Qt.yellow, 2, Qt.DashLine)
+                pen = QPen(Qt.GlobalColor.yellow, 2, Qt.PenStyle.DashLine)
                 painter.setPen(pen)
                 painter.drawRect(QRect(self._roi_start_pos, self._roi_end_pos))
         else:
             # 如果没有图像，显示提示文字
-            painter.setPen(Qt.white)
-            painter.drawText(self.rect(), Qt.AlignCenter, "视频预览区")
+            painter.setPen(Qt.GlobalColor.white)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "视频预览区")
 
     def _map_widget_rect_to_pixmap_rect(self, widget_rect):
         """

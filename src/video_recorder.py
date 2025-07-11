@@ -1,6 +1,8 @@
 # video_recorder.py
 # 作用: 提供一个线程化的视频录制器，将耗时的写文件操作放在独立线程中，避免阻塞主程序。
-
+import os
+dll_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'third_party'))
+os.environ['PATH'] = dll_path + os.pathsep + os.environ['PATH']
 import cv2
 import queue
 from PySide6.QtCore import QObject, Slot, QThread, Signal
@@ -27,7 +29,8 @@ class VideoRecorderWorker(QObject):
         print(f"录制线程启动，文件: {self.filepath}")
 
         try:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            #fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')
             self.writer = cv2.VideoWriter(self.filepath, fourcc, self.fps, self.frame_size)
             if not self.writer.isOpened():
                 raise IOError(f"无法创建视频写入器，路径: {self.filepath}")
