@@ -23,6 +23,7 @@ temp_tools/
 *.prof
 
 #忽略可编辑文档
+使用说明.txt
 epi_layer.txt
 substrate.txt
 usage.txt

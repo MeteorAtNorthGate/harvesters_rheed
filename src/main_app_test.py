@@ -7,8 +7,8 @@ from PySide6.QtWidgets import QApplication
 import config_manager
 from main_window import MainWindow
 
-import cProfile  # 1. 导入 cProfile
-import pstats    # 2. 导入 pstats
+import cProfile
+#import pstats
 
 
 def main():
