@@ -1,5 +1,5 @@
 # main_window.py
-# 作用: 定义应用程序的主窗口界面，使用新的VideoPreviewLabel替换旧的pyqtgraph预览区。
+# 作用: 定义应用程序的主窗口界面。
 
 import os
 import subprocess
@@ -22,21 +22,13 @@ from analysis_controller import AnalysisController
 from video_preview_widget import VideoPreviewLabel
 
 
-# --- 移除: PREVIEW_FPS 常量不再需要 ---
-# PREVIEW_FPS = 60
-
 class DynamicComboBox(QComboBox):
-	"""
-    一个可以动态加载列表项的QComboBox。
-    在每次用户点击展开它之前，都会发出一个信号。
-    """
 	aboutToShowPopup = Signal()
 
 	def __init__(self, parent=None):
 		super().__init__(parent)
 
 	def showPopup(self):
-		# 在显示弹出列表前，先发射信号，让主程序有机会更新列表内容
 		self.aboutToShowPopup.emit()
 		super().showPopup()
 
@@ -67,7 +59,6 @@ class MainWindow(QMainWindow):
 		self.camera_preview_timer = QTimer(self)
 		self.camera_preview_timer.timeout.connect(self.update_camera_preview)
 
-		# UI创建
 		main_layout = QVBoxLayout()
 		central_widget = QWidget()
 		central_widget.setLayout(main_layout)
@@ -85,9 +76,7 @@ class MainWindow(QMainWindow):
 		top_h_splitter.addWidget(left_v_splitter)
 		top_h_splitter.addWidget(center_panel)
 		top_h_splitter.addWidget(right_panel)
-
 		top_h_splitter.setSizes([400, 650, 550])
-
 		bottom_panel = self._create_bottom_interaction_panel()
 		main_v_splitter.addWidget(top_h_splitter)
 		main_v_splitter.addWidget(bottom_panel)
@@ -97,10 +86,8 @@ class MainWindow(QMainWindow):
 		self._set_default_values()
 		self._connect_signals()
 
-		# Initialize UI state after connecting signals
 		if self.status_button_group.checkedButton():
 			self._on_status_button_changed(self.status_button_group.checkedButton())
-
 		initial_function = self.main_plot_widget.control_output.function_combo.currentText()
 		self._on_function_selection_changed(initial_function)
 
@@ -118,16 +105,13 @@ class MainWindow(QMainWindow):
 		self.camera_controller.start_capture()
 		self._on_source_started()
 
-		# --- 修改: 使用从配置加载的 self.preview_fps ---
 		self.camera_preview_timer.start(1000 // self.preview_fps)
 
 	def _stop_all_sources(self):
 		if self.camera_preview_timer.isActive():
 			self.camera_preview_timer.stop()
-
 		if self.camera_controller:
 			self.camera_controller.stop_capture()
-
 		if self.video_player_controller:
 			self.video_player_controller.stop()
 
@@ -138,23 +122,22 @@ class MainWindow(QMainWindow):
 		with self.camera_controller.lock:
 			if self.camera_controller.latest_frame is not None:
 				frame_copy = self.camera_controller.latest_frame.copy()
-
 		if frame_copy is not None:
 			self._display_frame(frame_copy)
 			self.frame_to_analyze.emit(frame_copy)
 
-	@Slot(object)
-	def update_video_preview(self, frame):
-		if frame is not None:
-			self._display_frame(frame)
-			self.frame_to_analyze.emit(frame)
+	@Slot(dict)
+	def update_video_preview(self, frame_payload):
+		bgr_frame = frame_payload.get('bgr')
+		if bgr_frame is not None:
+			self._display_frame(bgr_frame)
+			self.frame_to_analyze.emit(bgr_frame)
 
 	def _display_frame(self, frame):
 		try:
 			self.current_frame_for_recording = frame
 			rgb_frame = frame[..., ::-1]
 			self.image_view.set_frame(rgb_frame)
-
 		except Exception as e:
 			print(f"显示帧时出错: {e}")
 
@@ -164,45 +147,34 @@ class MainWindow(QMainWindow):
 		self.stop_button.clicked.connect(self._on_stop_capture)
 		self.help_button.clicked.connect(self._on_show_help)
 		self.camera_list_widget.currentItemChanged.connect(self._on_camera_selected)
-
 		self.add_video_button.clicked.connect(self._on_add_video)
 		self.remove_video_button.clicked.connect(self._on_remove_video)
 		self.play_video_button.clicked.connect(self._on_play_video)
 		self.pause_video_button.clicked.connect(self._on_pause_video)
 		self.stop_video_button.clicked.connect(self._on_stop_video)
 		self.video_list_widget.currentItemChanged.connect(self._on_video_selected)
-
 		self.browse_path_button.clicked.connect(self._on_browse_save_path)
 		self.start_record_button.clicked.connect(self._on_start_recording)
 		self.stop_record_button.clicked.connect(self._on_stop_recording)
-
 		self.save_path_edit.editingFinished.connect(self._on_save_path_changed)
-
 		self.main_plot_widget.control_output.select_area_button.clicked.connect(self.image_view.enter_selection_mode)
 		self.image_view.roi_defined.connect(self.analysis_controller.set_roi)
-
 		self.main_plot_widget.dynamic_plot.clear_button.clicked.connect(self.analysis_controller.clear_dynamic_data)
-
 		self.frame_to_analyze.connect(self.analysis_controller.process_frame_for_analysis)
 		self.analysis_controller.data_cleared.connect(self.main_plot_widget.dynamic_plot.clear_plot)
 		self.analysis_controller.data_point_generated.connect(self.main_plot_widget.dynamic_plot.add_point)
 		self.analysis_controller.analysis_result_ready.connect(self.main_plot_widget.control_output.set_result_text)
-
 		self.main_plot_widget.static_plot.analysis_requested.connect(self._handle_analysis_request)
-
 		self.main_plot_widget.control_output.function_combo.currentTextChanged.connect(self._on_function_selection_changed)
-
 		self.status_button_group.buttonClicked.connect(self._on_status_button_changed)
 		self.substrate_combo.aboutToShowPopup.connect(self._populate_substrate_combo)
 		self.material_combo.aboutToShowPopup.connect(self._populate_material_combo)
-
 		self.edit_substrate_button.clicked.connect(self._on_edit_substrate_list)
 		self.edit_material_button.clicked.connect(self._on_edit_material_list)
 
 	@Slot(np.ndarray, np.ndarray)
 	def _handle_analysis_request(self, x_data, y_data):
 		selected_function = self.main_plot_widget.control_output.function_combo.currentText()
-
 		if selected_function == "亮度振荡分析":
 			self.analysis_controller.perform_fft_analysis(x_data, y_data)
 		else:
@@ -217,59 +189,38 @@ class MainWindow(QMainWindow):
 
 	def closeEvent(self, event):
 		self._on_save_path_changed()
-
 		print("正在关闭窗口并清理所有线程...")
-
 		self._on_stop_recording()
-
 		if self.camera_controller:
 			self.camera_controller.stop_capture()
 		if self.video_player_controller:
 			self.video_player_controller.stop()
-
-		print("等待数据源线程结束...")
-		if self.camera_controller and self.camera_controller.thread:
-			if not self.camera_controller.thread.wait(3000):
-				print("警告: 相机线程未能正常终止。")
-
-		if self.video_player_controller and self.video_player_controller.thread:
-			if not self.video_player_controller.thread.wait(2000):
-				print("警告: 视频播放器线程未能正常终止。")
-
-		print("正在停止分析线程...")
+		if self.camera_controller and self.camera_controller.thread and not self.camera_controller.thread.wait(3000):
+			print("警告: 相机线程未能正常终止。")
+		if self.video_player_controller and self.video_player_controller.thread and not self.video_player_controller.thread.wait(2000):
+			print("警告: 视频播放器线程未能正常终止。")
 		if self.analysis_thread.isRunning():
 			self.analysis_thread.quit()
 			if not self.analysis_thread.wait(2000):
 				print("警告: 分析线程未能正常终止。")
-
 		if self.harvester:
-			print("正在清理 Harvester...")
 			cleanup_harvester(self.harvester)
-			self.harvester = None
-
 		print("所有资源已清理，程序退出。")
 		event.accept()
 
 	def _cleanup_controller(self, controller_attr):
 		controller = getattr(self, controller_attr)
 		if not controller: return
-
 		print(f"开始清理 {controller_attr}...")
-
 		if self.video_recorder: self._on_stop_recording()
-
-		thread = controller.thread
-
+		thread = getattr(controller, 'thread', None)
 		setattr(self, controller_attr, None)
-
 		if thread and thread.isRunning():
-			print(f"正在请求 {controller_attr} 的线程停止...")
 			thread.quit()
 			if not thread.wait(2000):
 				print(f"警告: {controller_attr} 的线程未能正常终止。")
-
-		controller.deleteLater()
-
+		if controller:
+			controller.deleteLater()
 		self._update_ui_state()
 		self.frame_to_analyze.emit(None)
 		print(f"{controller_attr} 已被清理。")
@@ -278,38 +229,37 @@ class MainWindow(QMainWindow):
 	def _on_stop_capture(self):
 		if self.camera_controller:
 			self.stop_button.setEnabled(False)
-			print("UI请求停止相机...")
 			self.camera_controller.stop_capture()
 
 	def load_app_config(self):
 		try:
 			self.cti_path = config_manager.get_config_value('Paths', 'cti_path')
-			fps_str = config_manager.get_config_value('Camera', 'fps', '30')
-			self.camera_fps = int(fps_str)
-
+			self.camera_fps = int(config_manager.get_config_value('Camera', 'fps', '30'))
 			home_dir = os.path.expanduser('~')
 			default_save_path = os.path.join(home_dir, "Desktop", "GrowthRecordings")
 			self.save_path = config_manager.get_config_value('Paths', 'save_path', default_save_path)
+			self.preview_fps = int(config_manager.get_config_value('Display', 'preview_fps', '60'))
+			self.recording_mode = config_manager.get_config_value('Recording', 'mode', 'Compatibility')
+			# --- 新增: 加载MJPEG质量配置 ---
+			self.mjpeg_quality = int(config_manager.get_config_value('Recording', 'mjpeg_quality', '95'))
 
-			# --- 新增: 从config.ini加载预览帧率 ---
-			preview_fps_str = config_manager.get_config_value('Display', 'preview_fps', '60')
-			self.preview_fps = int(preview_fps_str)
-			if self.preview_fps <= 0:  # 添加一个安全检查，防止配置错误
-				print(f"警告: 无效的预览帧率 '{preview_fps_str}', 将重置为 60。")
-				self.preview_fps = 60
+			if self.preview_fps <= 0: self.preview_fps = 60
+			if not (0 <= self.mjpeg_quality <= 100): self.mjpeg_quality = 95
 
 			print("配置加载成功:")
 			print(f"  - CTI Path: {self.cti_path}")
 			print(f"  - Camera FPS: {self.camera_fps}")
 			print(f"  - Save Path: {self.save_path}")
 			print(f"  - Preview FPS: {self.preview_fps}")
+			print(f"  - Recording Mode: {self.recording_mode}")
+			print(f"  - MJPEG Quality: {self.mjpeg_quality}")
 
 		except Exception as e:
 			print(f"加载config.ini时出错: {e}, 将使用默认值。")
-			self.cti_path = ""
-			self.camera_fps = 30
-			self.save_path = os.path.join(os.path.expanduser('~'), "Desktop", "GrowthRecordings")
-			self.preview_fps = 60  # 设置默认回退值
+			self.cti_path, self.save_path = "", ""
+			self.camera_fps, self.preview_fps = 30, 60
+			self.recording_mode = 'Compatibility'
+			self.mjpeg_quality = 95
 			QMessageBox.warning(self, "配置错误", f"加载 config.ini 失败: {e}\n将使用默认设置。")
 
 	def _on_find_cameras(self):
@@ -323,7 +273,7 @@ class MainWindow(QMainWindow):
 				item.setData(Qt.ItemDataRole.UserRole, i)
 				self.camera_list_widget.addItem(item)
 		else:
-			QMessageBox.warning(self, "未找到设备", f"在路径 '{self.cti_path}' 未能发现任何相机设备。\n请检查 config.ini 中的路径和相机连接。")
+			QMessageBox.warning(self, "未找到设备", f"在路径 '{self.cti_path}' 未能发现任何相机设备。")
 
 	@Slot()
 	def _on_play_video(self):
@@ -336,7 +286,7 @@ class MainWindow(QMainWindow):
 		self._stop_all_sources()
 		filepath = current_item.data(Qt.ItemDataRole.UserRole)
 		self.video_player_controller = VideoPlayerController()
-		self.video_player_controller.new_frame_ready.connect(self.update_video_preview)
+		self.video_player_controller.new_frame_data.connect(self.update_video_preview)
 		self.video_player_controller.error_occurred.connect(self.show_error_message)
 		self.video_player_controller.playback_stopped.connect(self._on_playback_fully_stopped)
 		self.video_player_controller.load_video(filepath)
@@ -355,39 +305,45 @@ class MainWindow(QMainWindow):
 			self.show_error_message("请填写“炉号”和“保存路径”。")
 			return
 
+		recording_format_to_use = 'BGR'
+		if self.recording_mode == 'Quality' and isinstance(source, CameraController):
+			try:
+				cam_pixel_format = source.ia.remote_device.node_map.PixelFormat.value
+				if 'YUV' in cam_pixel_format:
+					recording_format_to_use = 'YUV'
+					print("检测到YUV相机，将使用高质量(YUV)模式录制。")
+			except Exception as e:
+				print(f"无法获取相机像素格式，将使用兼容模式: {e}")
+
+		file_extension = ".mov" if recording_format_to_use == 'YUV' else ".avi"
+
 		checked_button = self.status_button_group.checkedButton()
 		if not checked_button:
 			self.show_error_message("请选择一个状态。")
 			return
-
 		status_text = checked_button.text()
-
 		if self.other_status_edit.text():
 			status_filename = self.other_status_edit.text().strip()
 		else:
 			status_map = {"脱氧前": "non", "脱氧后": "deo", "开始生长": "start", "生长中": "growth", "结束生长": "end"}
 			status_filename = status_map.get(status_text, status_text)
-
 			if status_text in ["脱氧前", "脱氧后"]:
 				substrate = self.substrate_combo.currentText()
-				if substrate:
-					status_filename += f"_{substrate}"
+				if substrate: status_filename += f"_{substrate}"
 			elif status_text in ["开始生长", "生长中", "结束生长"]:
 				material = self.material_combo.currentText()
-				if material:
-					status_filename += f"_{material}"
+				if material: status_filename += f"_{material}"
 
 		furnace_dir = os.path.join(base_save_path, furnace_id)
-		try:
-			os.makedirs(furnace_dir, exist_ok=True)
-		except OSError as e:
-			self.show_error_message(f"无法创建保存目录:\n{furnace_dir}\n错误: {e}")
-			return
+		os.makedirs(furnace_dir, exist_ok=True)
 		base_filepath_part = os.path.join(furnace_dir, status_filename)
-		full_filepath = f"{base_filepath_part}.mp4"
+		full_filepath = f"{base_filepath_part}{file_extension}"
 		counter = 1
-		while os.path.exists(full_filepath): full_filepath = f"{base_filepath_part}_{counter}.mp4"; counter += 1
+		while os.path.exists(full_filepath):
+			full_filepath = f"{base_filepath_part}_{counter}{file_extension}"
+			counter += 1
 		full_filepath = full_filepath.replace("\\", "/")
+
 		fps = source.fps
 		if self.current_frame_for_recording is not None:
 			h, w, _ = self.current_frame_for_recording.shape
@@ -395,15 +351,17 @@ class MainWindow(QMainWindow):
 		else:
 			self.show_error_message("无法获取预览帧的分辨率。")
 			return
+
 		self.video_recorder = VideoRecorder(self)
 		self.video_recorder.error.connect(self.show_error_message)
 
 		if isinstance(source, CameraController):
-			source.new_frame_for_recording.connect(self.video_recorder.add_frame)
+			source.new_frame_data.connect(self.video_recorder.add_frame)
 		elif isinstance(source, VideoPlayerController):
-			source.new_frame_ready.connect(self.video_recorder.add_frame)
+			source.new_frame_data.connect(self.video_recorder.add_frame)
 
-		if self.video_recorder.start_recording(full_filepath, fps, frame_size):
+		# --- 修改: 启动录制时传入MJPEG质量参数 ---
+		if self.video_recorder.start_recording(full_filepath, fps, frame_size, recording_format_to_use, self.mjpeg_quality):
 			self._update_recording_ui(True)
 		else:
 			self.show_error_message(f"启动录制失败，请检查路径和权限。\n{full_filepath}")
@@ -416,9 +374,9 @@ class MainWindow(QMainWindow):
 			if source:
 				try:
 					if isinstance(source, CameraController):
-						source.new_frame_for_recording.disconnect(self.video_recorder.add_frame)
+						source.new_frame_data.disconnect(self.video_recorder.add_frame)
 					elif isinstance(source, VideoPlayerController):
-						source.new_frame_ready.disconnect(self.video_recorder.add_frame)
+						source.new_frame_data.disconnect(self.video_recorder.add_frame)
 				except RuntimeError:
 					pass
 			self.video_recorder.stop_recording()
@@ -436,10 +394,8 @@ class MainWindow(QMainWindow):
 	def _create_top_bar(self, parent_layout):
 		top_bar_layout = QHBoxLayout()
 		self.help_button = QPushButton("?")
-
-		self.help_button.setToolTip("打开使用说明文件 (使用说明.txt)")
+		self.help_button.setToolTip("打开使用说明文件 (usage.txt)")
 		self.help_button.setFixedWidth(35)
-
 		top_bar_layout.addWidget(self.help_button)
 		top_bar_layout.addStretch()
 		parent_layout.addLayout(top_bar_layout)
@@ -452,23 +408,18 @@ class MainWindow(QMainWindow):
 		layout.addWidget(QLabel("可用相机列表:"))
 		self.camera_list_widget = QListWidget()
 		layout.addWidget(self.camera_list_widget)
-
 		button_layout = QHBoxLayout()
 		self.find_button = QPushButton("查找相机")
 		self.start_button = QPushButton("启动相机")
 		self.stop_button = QPushButton("停止相机")
-
 		self.start_button.setEnabled(False)
 		self.stop_button.setEnabled(False)
-
 		for btn in [self.find_button, self.start_button, self.stop_button]:
 			btn.setMinimumHeight(30)
-
 		button_layout.addWidget(self.find_button)
 		button_layout.addWidget(self.start_button)
 		button_layout.addWidget(self.stop_button)
 		button_layout.addStretch()
-
 		layout.addLayout(button_layout)
 		return panel
 
@@ -492,7 +443,8 @@ class MainWindow(QMainWindow):
 		self.pause_video_button.setToolTip("暂停")
 		self.stop_video_button.setToolTip("停止")
 		for btn in [self.add_video_button, self.remove_video_button, self.play_video_button, self.pause_video_button,
-					self.stop_video_button]: btn.setMinimumHeight(30)
+					self.stop_video_button]:
+			btn.setMinimumHeight(30)
 		button_layout.addWidget(self.add_video_button)
 		button_layout.addWidget(self.remove_video_button)
 		button_layout.addStretch()
@@ -510,17 +462,13 @@ class MainWindow(QMainWindow):
 		panel.setFrameShape(QFrame.Shape.StyledPanel)
 		layout = QGridLayout(panel)
 		layout.setSpacing(10)
-
 		layout.addWidget(QLabel("炉号:"), 0, 0, Qt.AlignmentFlag.AlignRight)
 		self.furnace_id_edit = QLineEdit()
 		self.furnace_id_edit.setMaximumWidth(200)
 		layout.addWidget(self.furnace_id_edit, 0, 1)
-
 		layout.addWidget(QLabel("状态:"), 0, 2, Qt.AlignmentFlag.AlignRight)
-
 		self.status_button_group = QButtonGroup(self)
 		self.status_button_group.setExclusive(True)
-
 		deo_layout = QVBoxLayout()
 		btn_non = QPushButton("脱氧前")
 		btn_non.setMinimumHeight(30)
@@ -531,7 +479,6 @@ class MainWindow(QMainWindow):
 			self.status_button_group.addButton(btn)
 			deo_layout.addWidget(btn)
 		layout.addLayout(deo_layout, 0, 3, 2, 1)
-
 		substrate_v_layout = QVBoxLayout()
 		substrate_v_layout.addSpacing(7)
 		self.substrate_combo = DynamicComboBox()
@@ -542,7 +489,6 @@ class MainWindow(QMainWindow):
 		substrate_v_layout.addWidget(self.edit_substrate_button)
 		substrate_v_layout.addStretch(1)
 		layout.addLayout(substrate_v_layout, 0, 4, 2, 1)
-
 		growth_layout = QVBoxLayout()
 		btn_start = QPushButton("开始生长")
 		btn_start.setMinimumHeight(30)
@@ -555,7 +501,6 @@ class MainWindow(QMainWindow):
 			self.status_button_group.addButton(btn)
 			growth_layout.addWidget(btn)
 		layout.addLayout(growth_layout, 0, 5, 3, 1)
-
 		material_v_layout = QVBoxLayout()
 		material_v_layout.addSpacing(7)
 		self.material_combo = DynamicComboBox()
@@ -566,9 +511,7 @@ class MainWindow(QMainWindow):
 		material_v_layout.addWidget(self.edit_material_button)
 		material_v_layout.addStretch(1)
 		layout.addLayout(material_v_layout, 0, 6, 3, 1)
-
 		btn_non.setChecked(True)
-
 		self.start_record_button = QPushButton("开始录制")
 		self.stop_record_button = QPushButton("结束录制")
 		self.stop_record_button.setEnabled(False)
@@ -576,25 +519,20 @@ class MainWindow(QMainWindow):
 		self.stop_record_button.setMinimumHeight(35)
 		layout.addWidget(self.start_record_button, 0, 7)
 		layout.addWidget(self.stop_record_button, 1, 7)
-
 		self.bottom_status_label = QLabel("备用 (打印机器学习模型预测状态等)")
 		self.bottom_status_label.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Sunken)
 		self.bottom_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 		layout.addWidget(self.bottom_status_label, 0, 9, 5, 2)
-
 		layout.addWidget(QLabel("其他状态:"), 3, 0, Qt.AlignmentFlag.AlignRight)
 		self.other_status_edit = QLineEdit()
 		layout.addWidget(self.other_status_edit, 3, 1, 1, 8)
-
 		layout.addWidget(QLabel("保存路径:"), 4, 0, Qt.AlignmentFlag.AlignRight)
 		self.save_path_edit = QLineEdit()
 		self.browse_path_button = QPushButton("浏览...")
 		layout.addWidget(self.save_path_edit, 4, 1, 1, 7)
 		layout.addWidget(self.browse_path_button, 4, 8)
-
 		layout.setColumnStretch(10, 1)
 		layout.setRowStretch(5, 1)
-
 		return panel
 
 	def _set_default_values(self):
@@ -623,23 +561,19 @@ class MainWindow(QMainWindow):
 		is_media_active = is_cam_active or is_vid_active
 		is_recording = self.video_recorder is not None and self.video_recorder.is_recording
 		can_change_source = not is_media_active and not is_recording
-
 		self.find_button.setEnabled(can_change_source)
 		self.start_button.setEnabled(can_change_source and self.camera_list_widget.currentItem() is not None)
 		self.stop_button.setEnabled(is_cam_active and not is_recording)
 		self.camera_list_widget.setEnabled(can_change_source)
-
 		self.add_video_button.setEnabled(can_change_source)
 		self.remove_video_button.setEnabled(can_change_source)
 		self.play_video_button.setEnabled((
-												  can_change_source and self.video_list_widget.currentItem() is not None) or is_vid_paused)
+													  can_change_source and self.video_list_widget.currentItem() is not None) or is_vid_paused)
 		self.pause_video_button.setEnabled(is_vid_active and not is_vid_paused and not is_recording)
 		self.stop_video_button.setEnabled(is_vid_active and not is_recording)
 		self.video_list_widget.setEnabled(can_change_source)
-
 		self.start_record_button.setEnabled(is_media_active and not is_recording)
 		self.stop_record_button.setEnabled(is_recording)
-
 		if not is_media_active:
 			self.image_view.set_frame(None)
 			self.frame_to_analyze.emit(None)
@@ -705,13 +639,11 @@ class MainWindow(QMainWindow):
 		try:
 			if not os.path.exists(filename):
 				if '使用说明' in filename:
-					QMessageBox.information(self, "提示", f"文件 {filename} 未找到。\n将为您创建一个包含基本说明的新文件。")
+					QMessageBox.information(self, "提示", f"文件 {filename} 未找到。将为您创建一个新文件。")
 				else:
-					QMessageBox.information(self, "提示", f"文件 {filename} 未找到。\n将为您创建一个新文件。")
-
+					QMessageBox.information(self, "提示", f"文件 {filename} 未找到。将为您创建一个新文件。")
 				with open(filename, 'w', encoding='utf-8') as f:
 					f.write(f"# 在此文件中添加条目，每行一个。\n{default_content}")
-
 			if sys.platform == "win32":
 				os.startfile(filename)
 			elif sys.platform == "darwin":
@@ -723,54 +655,22 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_show_help(self):
-		default_text = """# RHEED 分析软件使用说明
-
-## 1. 相机操作
-- 点击“查找相机”以发现连接的设备。
-- 从列表中选择一台相机。
-- 点击“启动相机”开始预览。
-- 点击“停止相机”结束预览。
-
-## 2. 视频文件操作
-- 点击“添加视频”按钮添加视频文件。
-- 点击“移除视频”按钮移除选中的文件。
-- 从列表中选择一个视频。
-- 使用 ▶, ❚❚, ■ 按钮控制播放。
-
-## 3. 录制
-- 填写“炉号”。
-- 选择当前“状态”（如脱氧前、生长中等）。
-- 如果适用，选择“衬底”或“外延材料”。
-- 点击“开始录制”来保存视频流。
-- 录制的视频将保存在 “保存路径”/“炉号”/ 目录下。
-
-## 4. 分析
-- 在下拉菜单中选择“亮度振荡分析”。
-- 点击“选择分析区域”并在预览窗口中拖拽一个矩形区域。
-- 动态强度曲线将实时显示。
-- 静态图表显示FFT分析结果。
-
-## 5. 列表编辑
-- 点击“编辑衬底列表...”或“编辑外延材料列表...”按钮，可以直接修改文本文件，保存后下拉框内容会自动更新。
-"""
-		self._open_file_for_editing('使用说明.txt', default_text)
+		default_text = """..."""
+		self._open_file_for_editing('usage.txt', default_text)
 
 	@Slot()
 	def _on_edit_substrate_list(self):
 		self.substrate_combo.hidePopup()
-		default_text = "#请用-连接衬底材料和钼托规格\nInAs\nGaSb\nInAs-1X4\n"
-		self._open_file_for_editing('substrate.txt', default_text)
+		self._open_file_for_editing('substrate.txt', "#请用-连接衬底材料和钼托规格\nInAs\nGaSb\nInAs-1X4\n")
 
 	@Slot()
 	def _on_edit_material_list(self):
 		self.material_combo.hidePopup()
-		default_text = "#请用下划线而不是斜杠分割超晶格,斜杠不可以用于windows文件名\nInAs\nInAs_GaSb\n"
-		self._open_file_for_editing('epi_layer.txt', default_text)
+		self._open_file_for_editing('epi_layer.txt', "#请用下划线而不是斜杠分割超晶格\nInAs\nInAs_GaSb\n")
 
 	def _read_items_from_file(self, file_path):
 		items = []
 		if not os.path.exists(file_path):
-			print(f"配置文件缺失: {file_path}, 列表将为空。")
 			return items
 		try:
 			with open(file_path, 'r', encoding='utf-8') as f:
@@ -790,8 +690,7 @@ class MainWindow(QMainWindow):
 		items = self._read_items_from_file('substrate.txt')
 		self.substrate_combo.addItems(items)
 		index = self.substrate_combo.findText(current_selection)
-		if index != -1:
-			self.substrate_combo.setCurrentIndex(index)
+		if index != -1: self.substrate_combo.setCurrentIndex(index)
 
 	@Slot()
 	def _populate_material_combo(self):
@@ -801,20 +700,14 @@ class MainWindow(QMainWindow):
 		items = self._read_items_from_file('epi_layer.txt')
 		self.material_combo.addItems(items)
 		index = self.material_combo.findText(current_selection)
-		if index != -1:
-			self.material_combo.setCurrentIndex(index)
+		if index != -1: self.material_combo.setCurrentIndex(index)
 
-	Slot(QAbstractButton)
-
+	@Slot(QAbstractButton)
 	def _on_status_button_changed(self, button):
 		text = button.text()
 		is_deo_step = text in ["脱氧前", "脱氧后"]
 		is_growth_step = text in ["开始生长", "生长中", "结束生长"]
-
 		self.substrate_combo.setEnabled(is_deo_step)
 		self.material_combo.setEnabled(is_growth_step)
-
-		if not is_deo_step:
-			self.substrate_combo.setCurrentIndex(0)
-		if not is_growth_step:
-			self.material_combo.setCurrentIndex(0)
+		if not is_deo_step: self.substrate_combo.setCurrentIndex(0)
+		if not is_growth_step: self.material_combo.setCurrentIndex(0)

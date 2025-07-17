@@ -2,6 +2,7 @@
 # 作用: 提供一个独立于UI的相机控制器，在后台线程中处理图像捕获。
 
 import threading
+import time  # <-- 新增导入
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 import cv2
 import numpy as np
@@ -14,8 +15,7 @@ class CameraController(QObject):
     """
 	error_occurred = Signal(str)
 	capture_stopped = Signal()
-	# MODIFICATION: Add a dedicated signal for recording frames
-	new_frame_for_recording = Signal(object)
+	new_frame_data = Signal(dict)
 
 	def __init__(self, harvester, device_index=0, fps=30):
 		super().__init__()
@@ -24,7 +24,7 @@ class CameraController(QObject):
 		self.device_index = device_index
 		self._is_capturing = False
 		self.thread = None
-		self.fps = fps
+		self.fps = fps if fps > 0 else 30  # 确保fps大于0
 		print(f"相机控制器已使用帧率进行初始化: {self.fps} FPS")
 
 		self.latest_frame = None
@@ -60,22 +60,40 @@ class CameraController(QObject):
 				pixel_format = 'Unknown'
 			print(f"相机像素格式: {pixel_format}")
 
+			# --- 核心修改: 动态同步循环 ---
+			# 计算单帧的目标周期时长
+			target_frame_duration = 1.0 / self.fps
+
 			self.ia.start()
 			while self._is_capturing:
+				# 在循环开始时记录高精度时间戳
+				loop_start_time = time.perf_counter()
+
 				with self.ia.fetch() as buffer:
 					component = buffer.payload.components[0]
-					frame = self._process_component(component, pixel_format)
-					if frame is not None:
-						# Update the latest_frame for the preview timer
-						with self.lock:
-							self.latest_frame = frame
+					bgr_frame = self._process_component(component, pixel_format)
 
-						# MODIFICATION: Emit the full-rate frame for the recorder
-						self.new_frame_for_recording.emit(frame)
+					if bgr_frame is not None:
+						with self.lock:
+							self.latest_frame = bgr_frame
+
+						frame_payload = {
+							'bgr': bgr_frame,
+							'raw_component': component
+						}
+						self.new_frame_data.emit(frame_payload)
+
+				# 计算本次循环处理帧所花费的时间
+				processing_time = time.perf_counter() - loop_start_time
+
+				# 计算需要休眠的时间，以将整个循环的耗时补足到一个目标周期
+				sleep_duration = target_frame_duration - processing_time
+
+				if sleep_duration > 0:
+					time.sleep(sleep_duration)
 
 		except Exception as e:
-			# 在循环退出时，Harvester可能已经关闭，此时fetch会抛出异常，这是正常的。
-			if self._is_capturing:  # 只有在非正常停止时才报告错误
+			if self._is_capturing:
 				self.error_occurred.emit(f"捕获过程中发生错误: {e}")
 		finally:
 			self._cleanup()
@@ -86,7 +104,7 @@ class CameraController(QObject):
 		height = component.height
 		data = component.data
 		try:
-			if 'YUV422' in pixel_format or (data.nbytes == width * height * 2):
+			if 'YUV422' in pixel_format or (data.nbytes == width * height * 2 and component.data_format != 'Mono8'):
 				yuv_image = data.reshape(height, width, 2)
 				return cv2.cvtColor(yuv_image, cv2.COLOR_YUV2BGR_UYVY)
 
@@ -118,10 +136,6 @@ class CameraController(QObject):
 		self._is_capturing = False
 
 	def _cleanup(self):
-		"""
-        只清理本对象拥有的硬件资源 (ia)。
-        线程的管理由创建者(MainWindow)负责。
-        """
 		print("正在清理相机硬件资源 (ia object)...")
 		if self.ia:
 			try:
@@ -129,7 +143,6 @@ class CameraController(QObject):
 					self.ia.stop()
 				self.ia.destroy()
 			except Exception as e:
-				# 在清理阶段，忽略一些可能发生的异常，因为Harvester可能已被重置
 				print(f"清理 ia 资源时发生了一个可忽略的错误: {e}")
 			finally:
 				self.ia = None

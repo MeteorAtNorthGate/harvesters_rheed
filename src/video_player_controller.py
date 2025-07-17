@@ -8,7 +8,8 @@ class VideoPlayerController(QObject):
     """
     视频播放控制器，在独立的QThread中运行。
     """
-    new_frame_ready = Signal(object)
+    # --- 修改: 信号现在发出一个字典，以匹配camera_controller ---
+    new_frame_data = Signal(dict)
     error_occurred = Signal(str)
     playback_stopped = Signal()
 
@@ -42,12 +43,10 @@ class VideoPlayerController(QObject):
             self.error_occurred.emit("没有加载视频文件。")
             return
 
-        # 如果只是暂停了，就恢复播放
         if self._is_paused:
             self._is_paused = False
             return
 
-        # 如果还没开始播放，就启动新线程
         if not self._is_playing:
             self._is_playing = True
             self.thread = QThread()
@@ -73,18 +72,22 @@ class VideoPlayerController(QObject):
         if self.fps > 0:
             frame_delay = 1.0 / self.fps
         else:
-            frame_delay = 1.0 / 30  # 默认延迟
+            frame_delay = 1.0 / 30
 
         while self._is_playing:
             if not self._is_paused:
                 ret, frame = self.video_capture.read()
                 if ret:
-                    self.new_frame_ready.emit(frame)
+                    # --- 修改: 构造并发出与camera_controller兼容的字典 ---
+                    frame_payload = {
+                        'bgr': frame,
+                        'raw_component': None  # 视频文件没有原始组件
+                    }
+                    self.new_frame_data.emit(frame_payload)
                 else:
-                    self._is_playing = False  # 视频播放完毕
+                    self._is_playing = False
                     break
 
-            # 使用QThread的msleep来避免忙等待，并允许事件处理
             self.thread.msleep(int(frame_delay * 1000))
 
         self._cleanup()
@@ -99,4 +102,3 @@ class VideoPlayerController(QObject):
 
         self._is_playing = False
         self._is_paused = False
-

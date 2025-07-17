@@ -7,10 +7,22 @@ __pycache__/
 
 # 忽略config
 config.ini
-epi_layer.txt
-substrate.txt
 
 # 忽略 pyinstaller打包
 build/
 dist/
 main_app.spec
+
+#忽略tools输出
+nodemap_dump.txt
+
+#忽略各种小工具
+temp_tools/
+
+#忽略cprofiles调试记录
+*.prof
+
+#忽略可编辑文档
+epi_layer.txt
+substrate.txt
+usage.txt
