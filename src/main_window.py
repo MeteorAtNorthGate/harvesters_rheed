@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 	QFrame, QFileDialog, QLineEdit, QComboBox, QButtonGroup, QAbstractButton
 )
 import numpy as np
+import cv2
 
 import config_manager
 from camera_setup import setup_harvester, cleanup_harvester
@@ -136,7 +137,8 @@ class MainWindow(QMainWindow):
 	def _display_frame(self, frame):
 		try:
 			self.current_frame_for_recording = frame
-			rgb_frame = frame[..., ::-1]
+			#rgb_frame = frame[..., ::-1] #切片，导致C不连续，反而需要np.ascontiguousarray，降低性能
+			rgb_frame = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
 			self.image_view.set_frame(rgb_frame)
 		except Exception as e:
 			print(f"显示帧时出错: {e}")

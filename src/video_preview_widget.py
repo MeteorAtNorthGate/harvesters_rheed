@@ -4,7 +4,7 @@
 from PySide6.QtCore import Qt, Signal, Slot, QRect, QPoint
 from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor
 from PySide6.QtWidgets import QLabel, QApplication, QSizePolicy
-import numpy as np
+#import numpy as np
 
 
 class VideoPreviewLabel(QLabel):
@@ -55,8 +55,8 @@ class VideoPreviewLabel(QLabel):
             return
 
         try:
-            if not frame.flags['C_CONTIGUOUS']:
-                frame = np.ascontiguousarray(frame)
+            #if not frame.flags['C_CONTIGUOUS']:
+            #    frame = np.ascontiguousarray(frame)
 
             h, w, ch = frame.shape
             bytes_per_line = ch * w
