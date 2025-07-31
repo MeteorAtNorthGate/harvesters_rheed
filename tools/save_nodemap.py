@@ -1,4 +1,3 @@
-import sys
 import os
 import traceback
 from harvesters.core import Harvester
@@ -7,7 +6,7 @@ from genicam.gentl import GenericException
 from genicam import _genapi
 
 # --- 用户配置 ---
-# 请务必修改为您相机制造商提供的 GenTL Producer (.cti) 文件的【绝对路径】
+# 请务必修改为您相机制造商提供的 GenTL Producer (.cti) 文件的 绝对路径
 CTI_FILE_PATH = 'C:/Program Files/Basler/pylon 6/Runtime/x64/ProducerGEV.cti'  # 示例路径，请替换
 
 # 输出文件的名称

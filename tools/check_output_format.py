@@ -1,4 +1,3 @@
-import time
 from harvesters.core import Harvester
 
 # 导入适用于您环境的正确异常类
