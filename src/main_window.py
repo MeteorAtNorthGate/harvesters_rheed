@@ -264,6 +264,7 @@ class MainWindow(QMainWindow):
 			self.mjpeg_quality = 95
 			QMessageBox.warning(self, "配置错误", f"加载 config.ini 失败: {e}\n将使用默认设置。")
 
+	@Slot()
 	def _on_find_cameras(self):
 		if self.harvester: cleanup_harvester(self.harvester)
 		self.camera_list_widget.clear()
