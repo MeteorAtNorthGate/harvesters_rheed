@@ -2,6 +2,7 @@
 # 作用: 提供一个独立于UI的相机控制器。
 # 新架构: 控制器在选中相机时被创建，并立即初始化相机硬件(ia)和后台控制线程。
 #          这使得在启动视频流之前就可以访问和修改相机参数。
+# 修复: 为 ia.fetch() 增加超时以防止关闭时死锁。
 
 import threading
 import time
@@ -49,14 +50,12 @@ class CameraController(QObject):
 
 			# 连接信号和槽
 			self.thread.started.connect(self._capture_loop)
-			# 当线程结束时，自动调用清理函数
 			self.thread.finished.connect(self._cleanup)
 
 			self.thread.start()
 			print("相机控制线程已启动。")
 
 		except Exception as e:
-			# 如果初始化失败，发送错误信号并确保资源被标记为无效
 			self.error_occurred.emit(f"创建相机控制器失败: {e}")
 			self._is_running = False
 			self.ia = None
@@ -77,20 +76,27 @@ class CameraController(QObject):
 
 	def destroy(self):
 		"""
-		彻底销毁控制器。停止线程并触发清理。
-		这是在切换相机或关闭程序时调用的方法。
+		彻底销毁控制器。此方法会阻塞，直到后台线程完全终止。
 		"""
 		print("命令: 销毁相机控制器。")
-		self.stop_capture() # 首先确保采集停止
-		self._is_running = False # 然后通知线程退出循环
-
-		if self.thread and self.thread.isRunning():
-			# 等待线程正常退出
-			if not self.thread.wait(3000):
-				print("警告: 相机控制线程未能正常终止。")
-		else:
-			# 如果线程从未运行，手动清理
+		if not self.thread or not self.thread.isRunning():
+			print("线程未运行，直接清理。")
 			self._cleanup()
+			return
+
+		# 1. 发送停止信号
+		self._is_running = False
+		self.stop_capture()
+
+		# 2. 请求线程的事件循环退出
+		self.thread.quit()
+
+		# 3. 等待线程执行完毕
+		print("正在等待相机控制线程终止...")
+		if self.thread.wait(5000):  # 5秒超时
+			print("相机控制线程已成功终止。")
+		else:
+			print("警告: 相机控制线程未能正常终止。")
 
 	def _capture_loop(self):
 		"""
@@ -99,58 +105,54 @@ class CameraController(QObject):
 		"""
 		print("后台捕获循环已进入。")
 		try:
-			# 只要线程需要运行...
 			while self._is_running:
-				# 如果“采集”标志为True...
 				if self._is_acquiring:
 					try:
-						# 启动相机硬件的流模式
 						self.ia.start()
 						print("相机硬件流已启动。")
 
 						pixel_format = self.ia.remote_device.node_map.PixelFormat.value
 						target_frame_duration = 1.0 / self.fps
 
-						# 进入核心的图像抓取循环
 						while self._is_acquiring and self._is_running:
 							loop_start_time = time.perf_counter()
+							try:
+								# --- 核心修复: 为fetch增加超时，防止死锁 ---
+								with self.ia.fetch(timeout=0.5) as buffer:
+									component = buffer.payload.components[0]
+									bgr_frame = self._process_component(component, pixel_format)
 
-							with self.ia.fetch() as buffer:
-								component = buffer.payload.components[0]
-								bgr_frame = self._process_component(component, pixel_format)
+									if bgr_frame is not None:
+										with self.lock:
+											self.latest_frame = bgr_frame
 
-								if bgr_frame is not None:
-									with self.lock:
-										self.latest_frame = bgr_frame
+										frame_payload = {
+											'bgr': bgr_frame,
+											'raw_component': component
+										}
+										self.new_frame_data.emit(frame_payload)
+							except TimeoutError:
+								# 超时是正常的，意味着没有新帧。这让循环有机会检查_is_running标志。
+								continue
 
-									frame_payload = {
-										'bgr': bgr_frame,
-										'raw_component': component
-									}
-									self.new_frame_data.emit(frame_payload)
-
-							# 手动控制帧率
 							processing_time = time.perf_counter() - loop_start_time
 							sleep_duration = target_frame_duration - processing_time
 							if sleep_duration > 0:
+								# 使用 QThread.msleep() 替代 time.sleep()
 								self.thread.msleep(int(sleep_duration * 1000))
 
 					except Exception as e:
 						if self._is_running:
 							self.error_occurred.emit(f"捕获过程中发生错误: {e}")
-						self._is_acquiring = False  # 发生错误时停止采集
+						self._is_acquiring = False
 					finally:
-						# 确保在退出采集循环时停止硬件流
 						if self.ia and self.ia.is_acquiring():
 							self.ia.stop()
 							print("相机硬件流已停止。")
 				else:
-					# 如果不采集，则短暂休眠以避免CPU空转
 					self.thread.msleep(50)
 		finally:
-			# 当 _is_running 变为 False，整个循环结束，线程即将退出
 			print("捕获循环已终止。")
-			# 发出信号，表明此控制器实例已完全停止
 			self.capture_stopped.emit()
 
 	def _cleanup(self):
@@ -158,7 +160,6 @@ class CameraController(QObject):
 		print("正在清理相机硬件资源 (ia object)...")
 		if self.ia:
 			try:
-				# 销毁ia对象，释放与相机的连接
 				self.ia.destroy()
 			except Exception as e:
 				print(f"清理 ia 资源时发生了一个可忽略的错误: {e}")

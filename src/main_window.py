@@ -1,6 +1,7 @@
 # main_window.py
 # 作用: 定义应用程序的主窗口界面。
 # 新架构: 修改了UI事件处理逻辑以适应新的CameraController生命周期。
+# 修复: 重写 closeEvent 以确保正确的、同步的资源清理顺序。
 
 import os
 import subprocess
@@ -17,7 +18,7 @@ import cv2
 
 import config_manager
 from camera_setup import setup_harvester, cleanup_harvester
-from camera_controller import CameraController  # 使用重构后的控制器
+from camera_controller import CameraController
 from video_player_controller import VideoPlayerController
 from video_recorder import VideoRecorder
 from plotting_widgets import MainPlottingWidget
@@ -26,7 +27,6 @@ from video_preview_widget import VideoPreviewLabel
 
 
 class DynamicComboBox(QComboBox):
-	"""一个在显示弹出菜单前发射信号的自定义QComboBox。"""
 	aboutToShowPopup = Signal()
 
 	def __init__(self, parent=None):
@@ -44,90 +44,61 @@ class MainWindow(QMainWindow):
 		super().__init__()
 		self.setWindowTitle("Rheed_analyzer")
 		self.resize(1600, 900)
-
 		self.load_app_config()
-
-		# 初始化控制器引用
 		self.harvester = None
-		self.camera_controller = None  # 现在在选择时创建
+		self.camera_controller = None
 		self.video_player_controller = None
 		self.video_recorder = None
-
 		self.is_first_frame = True
 		self.current_frame_for_recording = None
-
-		# 初始化分析线程 (无变化)
 		self.analysis_controller = AnalysisController()
 		self.analysis_thread = QThread()
 		self.analysis_controller.moveToThread(self.analysis_thread)
 		self.analysis_thread.start()
 		print("分析控制器已移至后台线程。")
-
-		# 初始化预览计时器
 		self.camera_preview_timer = QTimer(self)
 		self.camera_preview_timer.timeout.connect(self.update_camera_preview)
-
-		# --- UI 创建 (大部分无变化) ---
 		main_layout = QVBoxLayout()
 		central_widget = QWidget()
 		central_widget.setLayout(main_layout)
 		self.setCentralWidget(central_widget)
 		self._create_top_bar(main_layout)
-
 		main_v_splitter = QSplitter(Qt.Orientation.Vertical)
 		top_h_splitter = QSplitter(Qt.Orientation.Horizontal)
 		left_v_splitter = QSplitter(Qt.Orientation.Vertical)
-
 		camera_list_panel = self._create_camera_list_panel()
 		self.camera_settings_panel = self._create_camera_settings_panel()
 		video_panel = self._create_video_list_panel()
-
 		left_v_splitter.addWidget(camera_list_panel)
 		left_v_splitter.addWidget(self.camera_settings_panel)
 		left_v_splitter.addWidget(video_panel)
 		left_v_splitter.setSizes([200, 150, 200])
-
 		center_panel = self._create_preview_panel()
 		right_panel = self._create_right_panel()
 		bottom_panel = self._create_bottom_interaction_panel()
-
 		top_h_splitter.addWidget(left_v_splitter)
 		top_h_splitter.addWidget(center_panel)
 		top_h_splitter.addWidget(right_panel)
 		top_h_splitter.setSizes([400, 650, 550])
-
 		main_v_splitter.addWidget(top_h_splitter)
 		main_v_splitter.addWidget(bottom_panel)
 		main_v_splitter.setSizes([650, 250])
 		main_layout.addWidget(main_v_splitter)
-
 		self._set_default_values()
-		self._connect_signals()  # 信号连接有重要修改
-
+		self._connect_signals()
 		if self.status_button_group.checkedButton():
 			self._on_status_button_changed(self.status_button_group.checkedButton())
 		initial_function = self.main_plot_widget.control_output.function_combo.currentText()
 		self._on_function_selection_changed(initial_function)
 
-	# ===================================================================
-	# 架构重构后的核心逻辑
-	# ===================================================================
-
 	def _connect_signals(self):
-		"""连接所有UI组件的信号和槽。"""
 		self.find_button.clicked.connect(self._on_find_cameras)
 		self.start_button.clicked.connect(self._on_start_capture)
 		self.stop_button.clicked.connect(self._on_stop_capture)
 		self.help_button.clicked.connect(self._on_show_help)
-
-		# *** 核心修改: 当列表选择变化时，触发控制器创建/销毁 ***
 		self.camera_list_widget.currentItemChanged.connect(self._on_camera_selection_changed)
-
-		# 相机参数设置信号
 		self.exposure_slider.valueChanged.connect(self._on_exposure_changed)
 		self.pixel_format_combo.currentTextChanged.connect(self._on_pixel_format_changed)
-
-		# 其他信号连接 (无变化)
 		self.add_video_button.clicked.connect(self._on_add_video)
 		self.remove_video_button.clicked.connect(self._on_remove_video)
 		self.play_video_button.clicked.connect(self._on_play_video)
@@ -154,49 +125,69 @@ class MainWindow(QMainWindow):
 		self.edit_substrate_button.clicked.connect(self._on_edit_substrate_list)
 		self.edit_material_button.clicked.connect(self._on_edit_material_list)
 
+	# --- 核心修复: 重写 closeEvent 方法 ---
+	def closeEvent(self, event):
+		"""
+		在关闭窗口前，确保所有资源被按照正确的、同步的顺序释放。
+		"""
+		self._on_save_path_changed()
+		print("正在关闭窗口并清理所有线程...")
+		self._on_stop_recording()
+
+		# 1. 销毁相机控制器 (此调用现在是阻塞的，会等待其线程结束)
+		if self.camera_controller:
+			print("正在从 closeEvent 调用 camera_controller.destroy()...")
+			self.camera_controller.destroy()
+
+		# 2. 停止视频播放器并等待其线程
+		if self.video_player_controller:
+			self.video_player_controller.stop()
+			if self.video_player_controller.thread and self.video_player_controller.thread.isRunning():
+				if not self.video_player_controller.thread.wait(3000):
+					print("警告: 视频播放器线程未能正常终止。")
+
+		# 3. 停止分析线程
+		if self.analysis_thread.isRunning():
+			self.analysis_thread.quit()
+			if not self.analysis_thread.wait(3000):
+				print("警告: 分析线程未能正常终止。")
+
+		# 4. 最后清理Harvester，此时所有使用它的线程都已停止
+		if self.harvester:
+			cleanup_harvester(self.harvester)
+
+		print("所有资源已清理，程序退出。")
+		event.accept()
+
 	@Slot(QListWidgetItem, QListWidgetItem)
 	def _on_camera_selection_changed(self, current, previous):
-		"""
-		当相机列表中的选择项改变时，此槽被调用。
-		它负责销毁旧的相机控制器并为新选项创建新的控制器。
-		"""
-		# 1. 停止所有活动并销毁旧的控制器
 		self._stop_all_sources()
 		if self.camera_controller:
 			print("相机选择已改变，正在销毁旧的控制器...")
 			self.camera_controller.destroy()
-			self.camera_controller.deleteLater()  # 请求Qt安全地删除对象
+			self.camera_controller.deleteLater()
 			self.camera_controller = None
 
-		# 2. 如果有新的有效选项，则创建新的控制器
 		if current and self.harvester:
 			device_index = current.data(Qt.ItemDataRole.UserRole)
 			print(f"正在为设备索引 {device_index} 创建新的CameraController...")
 			try:
-				# 创建新的控制器实例
 				self.camera_controller = CameraController(
 					harvester=self.harvester,
 					device_index=device_index,
 					fps=self.camera_fps
 				)
-				# 为新控制器连接信号
 				self.camera_controller.new_frame_data.connect(self.update_camera_preview)
 				self.camera_controller.error_occurred.connect(self.show_error_message)
 				self.camera_controller.capture_stopped.connect(self._on_camera_controller_fully_stopped)
-
-				# 立即更新相机参数UI
 				self._update_camera_settings_controls()
-
 			except Exception as e:
 				self.show_error_message(f"初始化相机失败: {e}")
 				self.camera_controller = None
-
-		# 3. 更新UI按钮状态
 		self._update_ui_state()
 
 	@Slot()
 	def _on_start_capture(self):
-		"""启动相机图像流。"""
 		if self.camera_controller and self.camera_controller.start_capture():
 			self._on_source_started()
 			self.camera_preview_timer.start(1000 // self.preview_fps)
@@ -206,23 +197,18 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_stop_capture(self):
-		"""停止相机图像流。"""
 		if self.camera_controller:
 			self.camera_preview_timer.stop()
 			self.camera_controller.stop_capture()
 			self._update_ui_state()
 
 	def _update_camera_settings_controls(self):
-		"""当相机连接时，更新曝光和像素格式控件。"""
 		if not self.camera_controller or not self.camera_controller.ia:
 			self.camera_settings_panel.setEnabled(False)
 			return
-
 		try:
 			node_map = self.camera_controller.ia.remote_device.node_map
 			self.camera_settings_panel.setEnabled(True)
-
-			# 更新曝光滑块
 			self.exposure_slider.blockSignals(True)
 			exposure_node = node_map.ExposureTimeAbs
 			min_exp, max_exp = int(exposure_node.min), int(exposure_node.max)
@@ -232,8 +218,6 @@ class MainWindow(QMainWindow):
 			self.exposure_label.setText(f"{current_exp}")
 			self.exposure_slider.blockSignals(False)
 			print(f"曝光时间已更新: 范围 [{min_exp}, {max_exp}], 当前值: {current_exp}")
-
-			# 更新像素格式下拉框
 			self.pixel_format_combo.blockSignals(True)
 			self.pixel_format_combo.clear()
 			pixel_format_node = node_map.PixelFormat
@@ -243,7 +227,6 @@ class MainWindow(QMainWindow):
 			self.pixel_format_combo.setCurrentText(current_format)
 			self.pixel_format_combo.blockSignals(False)
 			print(f"像素格式已更新: 可用项 {available_formats}, 当前值: {current_format}")
-
 		except Exception as e:
 			print(f"无法更新相机参数控件: {e}")
 			self.camera_settings_panel.setEnabled(False)
@@ -251,7 +234,6 @@ class MainWindow(QMainWindow):
 
 	@Slot(int)
 	def _on_exposure_changed(self, value):
-		"""当曝光滑块值改变时，设置相机曝光。"""
 		if self.camera_controller and self.camera_controller.ia:
 			try:
 				self.camera_controller.ia.remote_device.node_map.ExposureTimeAbs.value = float(value)
@@ -261,7 +243,6 @@ class MainWindow(QMainWindow):
 
 	@Slot(str)
 	def _on_pixel_format_changed(self, format_str):
-		"""当像素格式下拉框值改变时，设置相机像素格式。"""
 		if self.camera_controller and self.camera_controller.ia and format_str:
 			try:
 				self.camera_controller.ia.remote_device.node_map.PixelFormat.value = format_str
@@ -272,8 +253,6 @@ class MainWindow(QMainWindow):
 				self._update_camera_settings_controls()
 
 	def _update_ui_state(self):
-		"""根据当前程序状态更新所有UI组件的启用/禁用状态。"""
-		# 核心状态判断
 		is_cam_controller_valid = self.camera_controller is not None and self.camera_controller.ia is not None
 		is_cam_acquiring = is_cam_controller_valid and self.camera_controller._is_acquiring
 		is_vid_active = self.video_player_controller is not None
@@ -281,20 +260,12 @@ class MainWindow(QMainWindow):
 		is_media_active = is_cam_acquiring or is_vid_active
 		is_recording = self.video_recorder is not None and self.video_recorder.is_recording
 		can_change_source = not is_media_active and not is_recording
-
-		# 更新UI元素状态
 		self.find_button.setEnabled(can_change_source)
 		self.camera_list_widget.setEnabled(can_change_source)
-
-		# 相机控制按钮
 		self.start_button.setEnabled(
 			is_cam_controller_valid and not is_cam_acquiring and not is_vid_active and not is_recording)
 		self.stop_button.setEnabled(is_cam_acquiring and not is_recording)
-
-		# 相机参数面板
 		self.camera_settings_panel.setEnabled(is_cam_controller_valid and not is_recording)
-
-		# 视频控制按钮
 		self.add_video_button.setEnabled(can_change_source)
 		self.remove_video_button.setEnabled(can_change_source)
 		self.play_video_button.setEnabled(
@@ -302,56 +273,18 @@ class MainWindow(QMainWindow):
 		self.pause_video_button.setEnabled(is_vid_active and not is_vid_paused and not is_recording)
 		self.stop_video_button.setEnabled(is_vid_active and not is_recording)
 		self.video_list_widget.setEnabled(can_change_source)
-
-		# 录制按钮
 		self.start_record_button.setEnabled(is_media_active and not is_recording)
 		self.stop_record_button.setEnabled(is_recording)
-
 		if not is_media_active:
 			self.image_view.set_frame(None)
 			self.frame_to_analyze.emit(None)
 			self.current_frame_for_recording = None
 
-	def closeEvent(self, event):
-		"""在关闭窗口前，确保所有资源被正确释放。"""
-		self._on_save_path_changed()
-		print("正在关闭窗口并清理所有线程...")
-		self._on_stop_recording()
-
-		# 销毁相机和视频控制器
-		if self.camera_controller:
-			self.camera_controller.destroy()
-		if self.video_player_controller:
-			self.video_player_controller.stop()
-
-		# 等待线程结束
-		if self.camera_controller and self.camera_controller.thread and not self.camera_controller.thread.wait(3000):
-			print("警告: 相机线程未能正常终止。")
-		if self.video_player_controller and self.video_player_controller.thread and not self.video_player_controller.thread.wait(
-				2000):
-			print("警告: 视频播放器线程未能正常终止。")
-
-		# 清理分析线程和Harvester
-		if self.analysis_thread.isRunning():
-			self.analysis_thread.quit()
-			if not self.analysis_thread.wait(2000):
-				print("警告: 分析线程未能正常终止。")
-		if self.harvester:
-			cleanup_harvester(self.harvester)
-
-		print("所有资源已清理，程序退出。")
-		event.accept()
-
-	# ===================================================================
-	# 其余未修改或仅微调的方法
-	# ===================================================================
-
 	def _stop_all_sources(self):
-		"""停止所有活动的媒体源。"""
 		if self.camera_preview_timer.isActive():
 			self.camera_preview_timer.stop()
 		if self.camera_controller:
-			self.camera_controller.stop_capture()  # 只停止采集，不销毁
+			self.camera_controller.stop_capture()
 		if self.video_player_controller:
 			self.video_player_controller.stop()
 
@@ -383,13 +316,7 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_camera_controller_fully_stopped(self):
-		"""当相机控制器线程完全结束时调用。"""
 		print("主窗口收到信号：相机控制器已完全停止。")
-		# 在新架构下，这个槽函数的重要性降低了，
-		# 因为控制器的生命周期由_on_camera_selection_changed管理。
-		# 我们可以选择在这里清理对控制器的引用，以防万一。
-		if self.camera_controller and not self.camera_controller.thread.isRunning():
-			self.camera_controller = None
 		self._update_ui_state()
 
 	@Slot()
@@ -419,31 +346,6 @@ class MainWindow(QMainWindow):
 		else:
 			QMessageBox.warning(self, "未找到设备", f"在路径 '{self.cti_path}' 未能发现任何相机设备。")
 
-	# --- 以下方法基本无变化 ---
-
-	def _create_camera_settings_panel(self):
-		panel = QFrame()
-		panel.setFrameShape(QFrame.Shape.StyledPanel)
-		layout = QGridLayout(panel)
-		layout.setContentsMargins(5, 5, 5, 5)
-		layout.setSpacing(8)
-		title_label = QLabel("相机参数设置:")
-		layout.addWidget(title_label, 0, 0, 1, 2)
-		layout.addWidget(QLabel("曝光时间 (µs):"), 1, 0)
-		self.exposure_slider = QSlider(Qt.Orientation.Horizontal)
-		self.exposure_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-		self.exposure_slider.setTickInterval(10000)
-		layout.addWidget(self.exposure_slider, 2, 0)
-		self.exposure_label = QLabel("N/A")
-		self.exposure_label.setMinimumWidth(60)
-		self.exposure_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-		layout.addWidget(self.exposure_label, 2, 1)
-		layout.addWidget(QLabel("像素格式:"), 3, 0)
-		self.pixel_format_combo = DynamicComboBox()
-		layout.addWidget(self.pixel_format_combo, 4, 0, 1, 2)
-		panel.setEnabled(False)
-		return panel
-
 	def load_app_config(self):
 		try:
 			self.cti_path = config_manager.get_config_value('Paths', 'cti_path')
@@ -458,8 +360,10 @@ class MainWindow(QMainWindow):
 			if not (0 <= self.mjpeg_quality <= 100): self.mjpeg_quality = 95
 		except Exception as e:
 			QMessageBox.warning(self, "配置错误", f"加载 config.ini 失败: {e}\n将使用默认设置。")
-
-	# ... (fallback values)
+			self.cti_path, self.save_path = "", ""
+			self.camera_fps, self.preview_fps = 30, 60
+			self.recording_mode = 'Compatibility'
+			self.mjpeg_quality = 95
 
 	@Slot()
 	def _on_play_video(self):
@@ -486,17 +390,14 @@ class MainWindow(QMainWindow):
 			source = self.camera_controller
 		elif self.video_player_controller:
 			source = self.video_player_controller
-
 		if not source:
 			self.show_error_message("没有正在预览的视频源，无法录制。")
 			return
-		# ... (rest of recording logic is unchanged)
 		base_save_path = self.save_path_edit.text()
 		furnace_id = self.furnace_id_edit.text()
 		if not base_save_path or not furnace_id:
 			self.show_error_message("请填写“炉号”和“保存路径”。")
 			return
-
 		recording_format_to_use = 'BGR'
 		if self.recording_mode == 'Quality' and isinstance(source, CameraController):
 			try:
@@ -506,9 +407,7 @@ class MainWindow(QMainWindow):
 					print("检测到YUV相机，将使用高质量(YUV)模式录制。")
 			except Exception as e:
 				print(f"无法获取相机像素格式，将使用兼容模式: {e}")
-
 		file_extension = ".mov" if recording_format_to_use == 'YUV' else ".avi"
-
 		checked_button = self.status_button_group.checkedButton()
 		if not checked_button:
 			self.show_error_message("请选择一个状态。")
@@ -525,7 +424,6 @@ class MainWindow(QMainWindow):
 			elif status_text in ["开始生长", "生长中", "结束生长"]:
 				material = self.material_combo.currentText()
 				if material: status_filename += f"_{material}"
-
 		furnace_dir = os.path.join(base_save_path, furnace_id)
 		os.makedirs(furnace_dir, exist_ok=True)
 		base_filepath_part = os.path.join(furnace_dir, status_filename)
@@ -535,7 +433,6 @@ class MainWindow(QMainWindow):
 			full_filepath = f"{base_filepath_part}_{counter}{file_extension}"
 			counter += 1
 		full_filepath = full_filepath.replace("\\", "/")
-
 		fps = source.fps
 		if self.current_frame_for_recording is not None:
 			h, w, _ = self.current_frame_for_recording.shape
@@ -543,15 +440,12 @@ class MainWindow(QMainWindow):
 		else:
 			self.show_error_message("无法获取预览帧的分辨率。")
 			return
-
 		self.video_recorder = VideoRecorder(self)
 		self.video_recorder.error.connect(self.show_error_message)
-
 		if isinstance(source, CameraController):
 			source.new_frame_data.connect(self.video_recorder.add_frame)
 		elif isinstance(source, VideoPlayerController):
 			source.new_frame_data.connect(self.video_recorder.add_frame)
-
 		if self.video_recorder.start_recording(full_filepath, fps, frame_size, recording_format_to_use,
 											   self.mjpeg_quality):
 			self._update_recording_ui(True)
@@ -567,12 +461,11 @@ class MainWindow(QMainWindow):
 				source = self.camera_controller
 			elif self.video_player_controller:
 				source = self.video_player_controller
-
 			if source:
 				try:
 					source.new_frame_data.disconnect(self.video_recorder.add_frame)
 				except RuntimeError:
-					pass  # Signal may already be disconnected
+					pass
 			self.video_recorder.stop_recording()
 			self.video_recorder = None
 			self._update_recording_ui(False)
@@ -631,11 +524,6 @@ class MainWindow(QMainWindow):
 		self.play_video_button = QPushButton("▶")
 		self.pause_video_button = QPushButton("❚❚")
 		self.stop_video_button = QPushButton("■")
-		self.add_video_button.setToolTip("添加视频文件")
-		self.remove_video_button.setToolTip("移除选中视频")
-		self.play_video_button.setToolTip("播放/恢复")
-		self.pause_video_button.setToolTip("暂停")
-		self.stop_video_button.setToolTip("停止")
 		for btn in [self.add_video_button, self.remove_video_button, self.play_video_button, self.pause_video_button,
 					self.stop_video_button]:
 			btn.setMinimumHeight(30)
@@ -727,6 +615,29 @@ class MainWindow(QMainWindow):
 		layout.addWidget(self.browse_path_button, 4, 8)
 		layout.setColumnStretch(10, 1)
 		layout.setRowStretch(5, 1)
+		return panel
+
+	def _create_camera_settings_panel(self):
+		panel = QFrame()
+		panel.setFrameShape(QFrame.Shape.StyledPanel)
+		layout = QGridLayout(panel)
+		layout.setContentsMargins(5, 5, 5, 5)
+		layout.setSpacing(8)
+		title_label = QLabel("相机参数设置:")
+		layout.addWidget(title_label, 0, 0, 1, 2)
+		layout.addWidget(QLabel("曝光时间 (µs):"), 1, 0)
+		self.exposure_slider = QSlider(Qt.Orientation.Horizontal)
+		self.exposure_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+		self.exposure_slider.setTickInterval(10000)
+		layout.addWidget(self.exposure_slider, 2, 0)
+		self.exposure_label = QLabel("N/A")
+		self.exposure_label.setMinimumWidth(60)
+		self.exposure_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+		layout.addWidget(self.exposure_label, 2, 1)
+		layout.addWidget(QLabel("像素格式:"), 3, 0)
+		self.pixel_format_combo = DynamicComboBox()
+		layout.addWidget(self.pixel_format_combo, 4, 0, 1, 2)
+		panel.setEnabled(False)
 		return panel
 
 	def _set_default_values(self):
