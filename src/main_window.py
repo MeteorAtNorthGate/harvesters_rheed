@@ -324,16 +324,14 @@ class MainWindow(QMainWindow):
 	@Slot()
 	def _on_playback_fully_stopped(self):
 		"""
-				当视频播放结束时（无论是被用户停止还是自然结束），此槽被调用。
-				主要负责更新UI状态。
+		当视频播放结束时（无论是被用户停止还是自然结束），此槽被调用。
+		主要负责更新UI状态。
 		"""
 		print("主窗口收到信号：视频播放已完全停止。")
-		# 如果控制器是因为视频自然结束而停止的，那么在这里清理它。
 		if self.video_player_controller is not None:
-			print("视频播放自然结束，正在清理控制器。")
+			# 如果控制器是因为视频自然结束而停止的，那么在这里清理它。
 			self.video_player_controller.deleteLater()
 			self.video_player_controller = None
-
 		self._update_ui_state()
 
 	@Slot(str)
@@ -672,7 +670,14 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_stop_video(self):
-		if self.video_player_controller: self.video_player_controller.stop()
+		"""停止视频播放并安全地清理资源。"""
+		if self.video_player_controller:
+			# 此调用现在是同步的，会阻塞直到线程结束。
+			self.video_player_controller.stop()
+			self.video_player_controller.deleteLater()
+			self.video_player_controller = None
+			# 手动调用UI更新，因为此时控制器已不存在。
+			self._on_playback_fully_stopped()
 
 	@Slot()
 	def _on_video_selected(self, item):

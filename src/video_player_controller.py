@@ -63,8 +63,22 @@ class VideoPlayerController(QObject):
 
     @Slot()
     def stop(self):
-        """请求停止播放。"""
-        self._is_playing = False
+        """
+        请求停止播放，并阻塞直到后台线程完全终止。
+        这是一个同步方法，以确保线程安全。
+        """
+        if not self.thread or not self.thread.isRunning():
+            return
+
+        print("命令: 停止视频播放。")
+        self._is_playing = False  # 向循环发送停止信号
+
+        # 阻塞并等待线程结束
+        print("正在等待视频播放线程终止...")
+        if not self.thread.wait(2000):  # 2秒超时
+            print("警告: 视频播放线程未能正常终止。")
+        else:
+            print("视频播放线程已成功终止。")
 
     def _playback_loop(self):
         """在后台线程中运行的播放主循环。"""
@@ -92,6 +106,7 @@ class VideoPlayerController(QObject):
 
         self._cleanup()
         self.playback_stopped.emit()
+        self.thread.quit()
 
     def _cleanup(self):
         """只清理本对象拥有的资源，不处理线程。"""
