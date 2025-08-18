@@ -1,7 +1,9 @@
 # main_window.py
 # 作用: 定义应用程序的主窗口界面。
 # 新架构: 修改了UI事件处理逻辑以适应新的CameraController生命周期。
-# 修复: 重写 closeEvent 以确保正确的、同步的资源清理顺序。
+# 修复: 重写 closeEvent 和 _on_stop_video 以确保正确的资源清理顺序。
+# 小改动： 现在自定义状态信息不再代替标准状态，而是接在标准状态后一起构成文件名
+# （因为工友反馈了一个降智操作，在自定义状态里敲了个空白字符，导致录制文件都是空白名字。。。）
 
 import os
 import subprocess
@@ -321,9 +323,17 @@ class MainWindow(QMainWindow):
 
 	@Slot()
 	def _on_playback_fully_stopped(self):
-		if self.video_player_controller:
+		"""
+				当视频播放结束时（无论是被用户停止还是自然结束），此槽被调用。
+				主要负责更新UI状态。
+		"""
+		print("主窗口收到信号：视频播放已完全停止。")
+		# 如果控制器是因为视频自然结束而停止的，那么在这里清理它。
+		if self.video_player_controller is not None:
+			print("视频播放自然结束，正在清理控制器。")
 			self.video_player_controller.deleteLater()
 			self.video_player_controller = None
+
 		self._update_ui_state()
 
 	@Slot(str)
@@ -413,17 +423,18 @@ class MainWindow(QMainWindow):
 			self.show_error_message("请选择一个状态。")
 			return
 		status_text = checked_button.text()
+
+		status_map = {"脱氧前": "non", "脱氧后": "deo", "开始生长": "start", "生长中": "growth", "结束生长": "end"}
+		status_filename = status_map.get(status_text, status_text)
+		if status_text in ["脱氧前", "脱氧后"]:
+			substrate = self.substrate_combo.currentText()
+			if substrate: status_filename += f"_{substrate}"
+		elif status_text in ["开始生长", "生长中", "结束生长"]:
+			material = self.material_combo.currentText()
+			if material: status_filename += f"_{material}"
 		if self.other_status_edit.text():
-			status_filename = self.other_status_edit.text().strip()
-		else:
-			status_map = {"脱氧前": "non", "脱氧后": "deo", "开始生长": "start", "生长中": "growth", "结束生长": "end"}
-			status_filename = status_map.get(status_text, status_text)
-			if status_text in ["脱氧前", "脱氧后"]:
-				substrate = self.substrate_combo.currentText()
-				if substrate: status_filename += f"_{substrate}"
-			elif status_text in ["开始生长", "生长中", "结束生长"]:
-				material = self.material_combo.currentText()
-				if material: status_filename += f"_{material}"
+			status_filename += f"_{self.other_status_edit.text().strip()}"
+
 		furnace_dir = os.path.join(base_save_path, furnace_id)
 		os.makedirs(furnace_dir, exist_ok=True)
 		base_filepath_part = os.path.join(furnace_dir, status_filename)

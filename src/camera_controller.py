@@ -85,15 +85,15 @@ class CameraController(QObject):
 			return
 
 		# 1. 发送停止信号
-		self._is_running = False
 		self.stop_capture()
+		self._is_running = False
 
 		# 2. 请求线程的事件循环退出
 		self.thread.quit()
 
 		# 3. 等待线程执行完毕
 		print("正在等待相机控制线程终止...")
-		if self.thread.wait(5000):  # 5秒超时
+		if self.thread.wait(3000):  # 3秒超时
 			print("相机控制线程已成功终止。")
 		else:
 			print("警告: 相机控制线程未能正常终止。")
