@@ -671,13 +671,7 @@ class MainWindow(QMainWindow):
 	@Slot()
 	def _on_stop_video(self):
 		"""停止视频播放并安全地清理资源。"""
-		if self.video_player_controller:
-			# 此调用现在是同步的，会阻塞直到线程结束。
-			self.video_player_controller.stop()
-			self.video_player_controller.deleteLater()
-			self.video_player_controller = None
-			# 手动调用UI更新，因为此时控制器已不存在。
-			self._on_playback_fully_stopped()
+		if self.video_player_controller:self.video_player_controller.stop()
 
 	@Slot()
 	def _on_video_selected(self, item):

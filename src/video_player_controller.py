@@ -106,6 +106,7 @@ class VideoPlayerController(QObject):
 
         self._cleanup()
         self.playback_stopped.emit()
+        #必须在这里退出线程
         self.thread.quit()
 
     def _cleanup(self):
