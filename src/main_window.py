@@ -179,7 +179,7 @@ class MainWindow(QMainWindow):
 					device_index=device_index,
 					fps=self.camera_fps
 				)
-				self.camera_controller.new_frame_data.connect(self.update_camera_preview)
+				# self.camera_controller.new_frame_data.connect(self.update_camera_preview)
 				self.camera_controller.error_occurred.connect(self.show_error_message)
 				self.camera_controller.capture_stopped.connect(self._on_camera_controller_fully_stopped)
 				self._update_camera_settings_controls()
