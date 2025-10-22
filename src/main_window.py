@@ -657,19 +657,8 @@ class MainWindow(QMainWindow):
 		self.recording_time_label = QLabel("00:00:00")
 		self.recording_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 		self.recording_time_label.setMinimumWidth(80)
-		# 添加一些样式使其看起来像一个数字显示屏
-		self.recording_time_label.setStyleSheet("""
-			QLabel {
-				background-color: #1A1A1A;
-				color: #00FF00;
-				border: 1px solid #444444;
-				border-radius: 4px;
-				font-weight: bold;
-				font-family: 'Monospace', 'Courier New';
-				font-size: 14px;
-				padding: 5px;
-			}
-		""")
+		# 移除了黑底绿字的样式，恢复为默认外观
+		self.recording_time_label.setStyleSheet("")
 		layout.addWidget(self.recording_time_label, 0, 8) # 添加到“开始录制”按钮 (0,7) 的右侧
 		# -----------------------------
 
@@ -857,3 +846,4 @@ class MainWindow(QMainWindow):
 			self.analysis_controller.set_analysis_enabled(True)
 		else:
 			self.analysis_controller.set_analysis_enabled(False)
+
