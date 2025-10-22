@@ -4,6 +4,13 @@
 # 修复: 重写 closeEvent 和 _on_stop_video 以确保正确的资源清理顺序。
 # 小改动： 现在自定义状态信息不再代替标准状态，而是接在标准状态后一起构成文件名
 # （因为工友反馈了一个降智操作，在自定义状态里敲了个空白字符，导致录制文件都是空白名字。。。）
+#
+# --- 2025-10-22 修改 ---
+# 1. 添加了 self.recording_timer (QTimer) 和 self.recording_elapsed_seconds 来追踪录制时间。
+# 2. 在 _create_bottom_interaction_panel 中添加了 self.recording_time_label (QLabel) 用于显示时间。
+# 3. 添加了 _update_recording_timer_display 槽函数来每秒更新标签。
+# 4. 修改了 _on_start_recording 和 _on_stop_recording 来控制计时器的启动、停止和重置。
+# -------------------------
 
 import os
 import subprocess
@@ -60,6 +67,12 @@ class MainWindow(QMainWindow):
 		print("分析控制器已移至后台线程。")
 		self.camera_preview_timer = QTimer(self)
 		self.camera_preview_timer.timeout.connect(self.update_camera_preview)
+
+		# --- 新增：录制计时器 ---
+		self.recording_timer = QTimer(self)
+		self.recording_elapsed_seconds = 0
+		# ------------------------
+
 		main_layout = QVBoxLayout()
 		central_widget = QWidget()
 		central_widget.setLayout(main_layout)
@@ -126,6 +139,10 @@ class MainWindow(QMainWindow):
 		self.material_combo.aboutToShowPopup.connect(self._populate_material_combo)
 		self.edit_substrate_button.clicked.connect(self._on_edit_substrate_list)
 		self.edit_material_button.clicked.connect(self._on_edit_material_list)
+
+		# --- 新增：连接计时器信号 ---
+		self.recording_timer.timeout.connect(self._update_recording_timer_display)
+		# ---------------------------
 
 	# --- 核心修复: 重写 closeEvent 方法 ---
 	def closeEvent(self, event):
@@ -458,6 +475,11 @@ class MainWindow(QMainWindow):
 		if self.video_recorder.start_recording(full_filepath, fps, frame_size, recording_format_to_use,
 											   self.mjpeg_quality):
 			self._update_recording_ui(True)
+			# --- 新增：启动计时器 ---
+			self.recording_elapsed_seconds = 0
+			self.recording_time_label.setText("00:00:00")
+			self.recording_timer.start(1000)  # 每1000ms (1秒) 触发一次
+			# ------------------------
 		else:
 			self.show_error_message(f"启动录制失败，请检查路径和权限。\n{full_filepath}")
 			self.video_recorder = None
@@ -478,6 +500,26 @@ class MainWindow(QMainWindow):
 			self.video_recorder.stop_recording()
 			self.video_recorder = None
 			self._update_recording_ui(False)
+
+			# --- 新增：停止并重置计时器 ---
+			self.recording_timer.stop()
+			self.recording_elapsed_seconds = 0
+			self.recording_time_label.setText("00:00:00")
+			# -----------------------------
+
+	# --- 新增：计时器更新槽函数 ---
+	@Slot()
+	def _update_recording_timer_display(self):
+		"""
+		每秒更新一次录制时间显示。
+		"""
+		self.recording_elapsed_seconds += 1
+		hours = self.recording_elapsed_seconds // 3600
+		minutes = (self.recording_elapsed_seconds % 3600) // 60
+		seconds = self.recording_elapsed_seconds % 60
+		time_str = f"{hours:02}:{minutes:02}:{seconds:02}"
+		self.recording_time_label.setText(time_str)
+	# -----------------------------
 
 	def _create_preview_panel(self):
 		self.image_view = VideoPreviewLabel()
@@ -610,6 +652,27 @@ class MainWindow(QMainWindow):
 		self.stop_record_button.setMinimumHeight(35)
 		layout.addWidget(self.start_record_button, 0, 7)
 		layout.addWidget(self.stop_record_button, 1, 7)
+
+		# --- 新增：录制计时器标签 ---
+		self.recording_time_label = QLabel("00:00:00")
+		self.recording_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+		self.recording_time_label.setMinimumWidth(80)
+		# 添加一些样式使其看起来像一个数字显示屏
+		self.recording_time_label.setStyleSheet("""
+			QLabel {
+				background-color: #1A1A1A;
+				color: #00FF00;
+				border: 1px solid #444444;
+				border-radius: 4px;
+				font-weight: bold;
+				font-family: 'Monospace', 'Courier New';
+				font-size: 14px;
+				padding: 5px;
+			}
+		""")
+		layout.addWidget(self.recording_time_label, 0, 8) # 添加到“开始录制”按钮 (0,7) 的右侧
+		# -----------------------------
+
 		self.bottom_status_label = QLabel("备用 (打印机器学习模型预测状态等)")
 		self.bottom_status_label.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Sunken)
 		self.bottom_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
